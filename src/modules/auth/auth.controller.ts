@@ -2,6 +2,7 @@
 import {
   Controller, Post, Body, UseGuards, Request,
   HttpCode, HttpStatus, Ip,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -13,6 +14,11 @@ import { CurrentUser } from '../../common/decorators/current-user/current-user.d
 import { OtpService } from '../otp/otp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { UserDocument } from '../users/schemas/user.schema'; 
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { RegisterAdminDto } from './dto/register-admin.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -35,6 +41,16 @@ export class AuthController {
   @ApiOperation({ summary: 'Generate a captcha code' })
   captcha() {
     return this.authService.generateCaptcha();
+  }
+
+
+  // ── Register Admin ────────────────────────────────────────────
+  @Post('register/admin')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ short: { ttl: 60000, limit: 2 } })
+  @ApiOperation({ summary: 'Register a new admin account (requires ADMIN_SECRET_KEY)' })
+  registerAdmin(@Body() dto: RegisterAdminDto, @Ip() ip: string) {
+    return this.authService.registerAdmin(dto, ip);
   }
 
   @Post('login')
@@ -65,6 +81,47 @@ export class AuthController {
     await this.notificationsService.sendOtpEmail(body.email, otp, 'email_verification');
     return { message: 'OTP resent. Check your email.' };
   }
+
+ // ── Forgot Password ───────────────────────────────────────────
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { ttl: 60000, limit: 3 } })
+  @ApiOperation({ summary: 'Request a password reset OTP via email' })
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Ip() ip: string) {
+    return this.authService.forgotPassword(dto, ip);
+  }
+
+  // ── Verify Rseset OTP ──────────────────────────────────────────
+  @Post('forgot-password/verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify the password reset OTP — returns a resetToken' })
+  verifyResetOtp(@Body() body: { email: string; otp: string }) {
+    return this.authService.verifyResetOtp(body.email, body.otp);
+  }
+
+  // ── Reset Password ────────────────────────────────────────────
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { ttl: 60000, limit: 3 } })
+  @ApiOperation({ summary: 'Reset password using email + OTP + new password' })
+  resetPassword(@Body() dto: ResetPasswordDto, @Ip() ip: string) {
+    return this.authService.resetPassword(dto, ip);
+  }
+
+  // ── Change Password (authenticated) ──────────────────────────
+  @Patch('change-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT')
+  @ApiOperation({ summary: 'Change password while logged in (requires current password)' })
+  changePassword(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(String(user._id), dto);
+  }
+
+
 
   @Post('2fa/setup')
   @UseGuards(JwtAuthGuard)

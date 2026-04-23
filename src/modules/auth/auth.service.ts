@@ -9,15 +9,25 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import * as speakeasy from 'speakeasy';
 import * as qrcode from 'qrcode';
-import { User, UserDocument, UserStatus } from '../users/schemas/user.schema';
+import { User, UserDocument, UserRole, UserStatus } from '../users/schemas/user.schema';
 import { OtpService } from '../otp/otp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterAdminDto } from './dto/register-admin.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { PasswordReset, PasswordResetDocument } from './schemas/password-reset.schema';
 
 @Injectable()
 export class AuthService {
+  verifyResetOtp(email: string, otp: string) {
+    throw new Error('Method not implemented.');
+  }
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+     @InjectModel(PasswordReset.name)         
+    private readonly resetModel: Model<PasswordResetDocument>,
     private jwtService:           JwtService,
     private config:               ConfigService,
     private otpService:           OtpService,
@@ -44,6 +54,53 @@ export class AuthService {
 
     return { message: 'Registration successful. Check your email to verify your account.' };
   }
+
+
+
+  // ── Register Admin ────────────────────────────────────────────
+  async registerAdmin(dto: RegisterAdminDto, ip: string) {
+    const secretKey = this.config.get<string>('ADMIN_SECRET_KEY');
+    if (!secretKey || dto.adminSecretKey !== secretKey) {
+      throw new ForbiddenException('Invalid admin registration key');
+    }
+
+    const exists = await this.userModel.findOne({
+      $or: [{ email: dto.email.toLowerCase() }, { username: dto.username.toLowerCase() }],
+    });
+    if (exists) throw new ConflictException('Email or username already registered');
+
+    const rounds = parseInt(this.config.get<string>('BCRYPT_ROUNDS', '12'), 10);
+    const passwordHash = await bcrypt.hash(dto.password, rounds);
+
+    const admin = await this.userModel.create({
+      username:      dto.username.toLowerCase(),
+      email:         dto.email.toLowerCase(),
+      passwordHash,
+      firstName:     dto.firstName,
+      lastName:      dto.lastName,
+      phoneNumber:   dto.phoneNumber,
+      role:          UserRole.ADMIN,
+      status:        UserStatus.ACTIVE,
+      emailVerified: true,
+      kycStatus:     'approved',
+    });
+
+    // Send welcome email to admin
+    await this.notificationsService.sendAdminWelcomeEmail(
+      admin.email,
+      admin.firstName,
+      dto.username,
+    );
+
+    return {
+      message:  'Admin account created successfully.',
+      adminId:  String(admin._id),
+      username: admin.username,
+      email:    admin.email,
+      role:     admin.role,
+    };
+  }
+
 
   // ── Validate (used by LocalStrategy) ─────────────────────────
   async validateUser(username: string, password: string): Promise<UserDocument> {
@@ -101,6 +158,133 @@ export class AuthService {
       user: { id: user._id, username: user.username, email: user.email, role: user.role },
     };
   }
+
+
+  // ── Reset Password ────────────────────────────────────────────
+  async resetPassword(dto: ResetPasswordDto, ip: string) {
+    if (dto.newPassword !== dto.confirmPassword)
+      throw new BadRequestException('Passwords do not match');
+
+    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
+    if (!user) throw new BadRequestException('Invalid request');
+
+    // Find valid reset record
+    const resetRecord = await this.resetModel.findOne({
+      userId:    user._id,
+      used:      false,
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
+
+    if (!resetRecord) throw new BadRequestException('Reset code expired. Request a new one.');
+
+    const isValid = await bcrypt.compare(dto.otp, resetRecord.token);
+    if (!isValid) throw new BadRequestException('Invalid reset code');
+
+    // Check new password is not same as current
+    const isSame = await bcrypt.compare(dto.newPassword, user.passwordHash);
+    if (isSame) throw new BadRequestException('New password cannot be the same as your current password');
+
+    const rounds       = this.config.get<number>('BCRYPT_ROUNDS', 12);
+    const passwordHash = await bcrypt.hash(dto.newPassword, rounds);
+
+    // Update password and invalidate all sessions
+    await this.userModel.findByIdAndUpdate(user._id, {
+      passwordHash,
+      refreshTokenHash:    null,
+      failedLoginAttempts: 0,
+      lockedUntil:         null,
+      status:              UserStatus.ACTIVE,
+    });
+
+    // Mark reset token as used
+    await this.resetModel.findByIdAndUpdate(resetRecord._id, { used: true });
+
+    // Send confirmation email
+    await this.notificationsService.sendPasswordChangedEmail(
+      user.email,
+      user.firstName || user.username,
+      ip,
+    );
+
+    return { message: 'Password reset successfully. Please login with your new password.' };
+  }
+
+
+ // ── Logout ────────────────────────────────────────────────────
+  async logout(userId: string) {
+    await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash: null });
+    return { message: 'Logged out successfully' };
+  }
+
+  // ── Forgot Password ───────────────────────────────────────────
+  async forgotPassword(dto: ForgotPasswordDto, ip: string) {
+    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
+
+    // Always return same response to prevent email enumeration
+    const genericResponse = {
+      message: 'If an account with that email exists, a reset code has been sent.',
+    };
+
+    if (!user) return genericResponse;
+    if (user.status === UserStatus.SUSPENDED) return genericResponse;
+
+    // Invalidate any existing reset tokens for this user
+    await this.resetModel.updateMany(
+      { userId: user._id, used: false },
+      { used: true },
+    );
+
+    // Generate 6-digit OTP
+    const otp       = this.otpService.generate();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const tokenHash = await bcrypt.hash(otp, 10);
+
+    await this.resetModel.create({
+      userId:    user._id,
+      token:     tokenHash,
+      expiresAt,
+      ipAddress: ip,
+      used:      false,
+    });
+
+    // Send reset email
+    await this.notificationsService.sendPasswordResetEmail(
+      user.email,
+      user.firstName || user.username,
+      otp,
+    );
+
+    return genericResponse;
+  }
+
+
+
+  // ── Change Password (logged in) ───────────────────────────────
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    if (dto.newPassword !== dto.confirmPassword)
+      throw new BadRequestException('Passwords do not match');
+
+    const user = await this.userModel.findById(userId).select('+passwordHash');
+    if (!user) throw new NotFoundException('User not found');
+
+    const isCurrentValid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!isCurrentValid) throw new UnauthorizedException('Current password is incorrect');
+
+    const isSame = await bcrypt.compare(dto.newPassword, user.passwordHash);
+    if (isSame) throw new BadRequestException('New password cannot be the same as your current password');
+
+    const rounds       = this.config.get<number>('BCRYPT_ROUNDS', 12);
+    const passwordHash = await bcrypt.hash(dto.newPassword, rounds);
+
+    await this.userModel.findByIdAndUpdate(userId, {
+      passwordHash,
+      refreshTokenHash: null, // invalidate all existing sessions
+    });
+
+    return { message: 'Password changed successfully. Please login again.' };
+  }
+
+
 
   // ── Verify Captcha ────────────────────────────────────────────
   verifyCaptcha(submitted: string, sessionCode: string): boolean {

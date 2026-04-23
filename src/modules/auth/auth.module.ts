@@ -10,10 +10,12 @@ import { LocalStrategy } from './strategies/local.strategy';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { OtpModule } from '../otp/otp.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PasswordReset, PasswordResetSchema } from './schemas/password-reset.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    MongooseModule.forFeature([{ name: User.name, schema: UserSchema },
+      { name: PasswordReset.name, schema: PasswordResetSchema },]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -74,6 +74,104 @@ export class NotificationsService {
     });
   }
 
+  // ── Password Reset Email ──────────────────────────────────────
+async sendPasswordResetEmail(
+  email:     string,
+  firstName: string,
+  otp:       string,
+): Promise<void> {
+  await this.resend.emails.send({
+    from:    this.from,
+    to:      email,
+    subject: 'NexaBank — Password Reset Request',
+    html: this.emailWrapper(`
+      <h2 style="color:#0a2342">Password Reset Request</h2>
+      <p>Dear ${firstName},</p>
+      <p>We received a request to reset your NexaBank password. Use the code below:</p>
+      <div style="background:#fef2f2;border:2px dashed #dc2626;border-radius:12px;padding:24px;text-align:center;margin:20px 0">
+        <span style="font-size:48px;font-weight:800;letter-spacing:12px;color:#dc2626;font-family:monospace">${otp}</span>
+      </div>
+      <p style="color:#555">This code expires in <strong>15 minutes</strong>.</p>
+      <div style="background:#fff7ed;border-left:4px solid #f97316;padding:16px;border-radius:6px;margin:20px 0">
+        <strong>⚠️ Security Warning:</strong><br/>
+        If you did not request this password reset, please contact us immediately at
+        <a href="mailto:security@nexabank.com" style="color:#dc2626">security@nexabank.com</a>
+        and secure your account.
+      </div>
+      <p style="color:#888;font-size:13px">Never share this code with anyone — NexaBank will never ask for it.</p>
+    `),
+  });
+}
+
+// ── Password Changed Confirmation ─────────────────────────────
+async sendPasswordChangedEmail(
+  email:     string,
+  firstName: string,
+  ip:        string,
+): Promise<void> {
+  await this.resend.emails.send({
+    from:    this.from,
+    to:      email,
+    subject: 'NexaBank — Your Password Has Been Changed',
+    html: this.emailWrapper(`
+      <h2 style="color:#0a2342">Password Changed Successfully</h2>
+      <p>Dear ${firstName},</p>
+      <p>Your NexaBank account password was successfully changed.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:20px 0">
+        ${this.tableRow('Date & Time', new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET')}
+        ${this.tableRow('IP Address',  ip)}
+      </table>
+      <div style="background:#fef2f2;border-left:4px solid #dc2626;padding:16px;border-radius:6px;margin:20px 0">
+        <strong>🚨 Was this not you?</strong><br/>
+        If you did not make this change, contact us immediately:<br/>
+        📧 <a href="mailto:security@nexabank.com" style="color:#dc2626">security@nexabank.com</a><br/>
+        📞 1-800-NEXABANK
+      </div>
+    `),
+  });
+}
+
+// ── Admin Welcome Email ───────────────────────────────────────
+async sendAdminWelcomeEmail(
+  email:     string,
+  firstName: string,
+  username:  string,
+): Promise<void> {
+  await this.resend.emails.send({
+    from:    this.from,
+    to:      email,
+    subject: 'NexaBank — Admin Account Created',
+    html: this.emailWrapper(`
+      <h2 style="color:#0a2342">Admin Account Created 🔐</h2>
+      <p>Dear ${firstName},</p>
+      <p>An admin account has been created for you on the NexaBank system.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:20px 0">
+        ${this.tableRow('Username', username)}
+        ${this.tableRow('Email',    email)}
+        ${this.tableRow('Role',     'Administrator')}
+        ${this.tableRow('Access',   'NexaBank Admin Panel')}
+      </table>
+      <div style="background:#f0f4ff;border-left:4px solid #0a2342;padding:16px;border-radius:6px;margin:20px 0">
+        <strong>🔒 Security Recommendations:</strong>
+        <ul style="margin:8px 0;padding-left:20px;color:#555">
+          <li>Set up 2FA immediately after first login</li>
+          <li>Set a 6-digit security PIN</li>
+          <li>Never share your credentials</li>
+          <li>Log out after each admin session</li>
+        </ul>
+      </div>
+      <p style="color:#888;font-size:13px">
+        Admin Panel: <a href="${this.config.get('FRONTEND_URL')}/admin" style="color:#3b82f6">
+          ${this.config.get('FRONTEND_URL')}/admin
+        </a>
+      </p>
+    `),
+  });
+}
+
+
+
+
   // ── Templates ─────────────────────────────────────────────────
   private otpTemplate(otp: string, title: string): string {
     return this.emailWrapper(`
