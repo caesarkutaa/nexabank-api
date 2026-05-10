@@ -1,39 +1,29 @@
-import { Controller, Post, Get, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user/current-user.decorator';
-import type { UserDocument } from '../users/schemas/user.schema';
-import { CryptoService } from './crypto.service';
-import { InitiateCryptoDto } from './dto/crypto-payment.dto';
-
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { CryptoAddress, CryptoAddressDocument } from '../admin/schemas/crypto-address.schema';
+ 
 @ApiTags('Crypto')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT')
 @Controller('crypto')
 export class CryptoController {
-  constructor(private readonly cryptoService: CryptoService) {}
-
-  @Get('rates')
-  @ApiOperation({ summary: 'Get live cryptocurrency exchange rates in USD' })
-  rates() { return this.cryptoService.getExchangeRates(); }
-
-  @Post('initiate')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Initiate crypto payment — sends OTP' })
-  initiate(@CurrentUser() user: UserDocument, @Body() dto: Omit<InitiateCryptoDto, 'otp'>) {
-    return this.cryptoService.initiate(String(user._id), dto, user.email);
-  }
-
-  @Post('confirm')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Confirm crypto payment with OTP' })
-  confirm(@CurrentUser() user: UserDocument, @Body() dto: InitiateCryptoDto) {
-    return this.cryptoService.confirm(String(user._id), dto, user);
-  }
-
-  @Get('history')
-  @ApiOperation({ summary: 'Get crypto payment history' })
-  history(@CurrentUser() user: UserDocument) {
-    return this.cryptoService.getHistory(String(user._id));
+  constructor(
+    @InjectModel(CryptoAddress.name)
+    private readonly cryptoAddrModel: Model<CryptoAddressDocument>,
+  ) {}
+ 
+  @Get('addresses')
+  @ApiOperation({ summary: 'Get all active crypto deposit addresses (user-facing)' })
+  async getActiveAddresses() {
+    const addresses = await this.cryptoAddrModel
+      .find({ isActive: true })
+      .select('-lastUpdatedBy -__v')  
+      .sort({ coin: 1 })
+      .lean();
+ 
+    return addresses;
   }
 }

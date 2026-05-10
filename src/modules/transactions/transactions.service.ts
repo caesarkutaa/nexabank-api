@@ -9,43 +9,49 @@ export class TransactionsService {
     @InjectModel(Transaction.name) private txModel: Model<TransactionDocument>,
   ) {}
 
-  async getTransactions(
-    userId: string,
-    filters: {
-      type?:      string;
-      direction?: string;
-      status?:    string;
-      from?:      string;
-      to?:        string;
-      page?:      number;
-      limit?:     number;
-    } = {},
-  ) {
-    const query: any = { userId: new Types.ObjectId(userId) };
+  // In transactions.service.ts — make sure receiptUrl is included
+// and sort by processedAt OR createdAt (whichever is newer) so backdated
+// transactions still appear in their logical position
 
-    if (filters.type)      query.type      = filters.type;
-    if (filters.direction) query.direction  = filters.direction;
-    if (filters.status)    query.status     = filters.status;
-    if (filters.from || filters.to) {
-      query.createdAt = {};
-      if (filters.from) query.createdAt.$gte = new Date(filters.from);
-      if (filters.to)   query.createdAt.$lte = new Date(filters.to);
-    }
+async getTransactions(userId: string, query: any) {
+  const filter: any = { userId: new Types.ObjectId(userId) };
 
-    const page  = filters.page  ?? 1;
-    const limit = filters.limit ?? 20;
-    const skip  = (page - 1) * limit;
-
-    const [transactions, total] = await Promise.all([
-      this.txModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-      this.txModel.countDocuments(query),
-    ]);
-
-    return {
-      transactions,
-      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-    };
+  if (query.type)      filter.type      = query.type;
+  if (query.direction) filter.direction = query.direction;
+  if (query.status)    filter.status    = query.status;
+  if (query.from || query.to) {
+    filter.createdAt = {};
+    if (query.from) filter.createdAt.$gte = new Date(query.from);
+    if (query.to)   filter.createdAt.$lte = new Date(query.to);
   }
+
+  const page  = Number(query.page)  || 1;
+  const limit = Number(query.limit) || 20;
+
+  const [transactions, total] = await Promise.all([
+    this.txModel
+      .find(filter)
+      // ✅ exclude metadata so admin notes never leak to user
+      .select('-metadata')
+      // ✅ include receiptUrl explicitly (in case you have a restrictive select)
+      // Remove any .select() that might be blocking receiptUrl
+     .sort({
+          processedAt: -1,
+          createdAt: -1,
+          _id: -1,
+        })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    this.txModel.countDocuments(filter),
+  ]);
+
+  return {
+    transactions,
+    pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+  };
+}
+
 
   async getTransactionById(txId: string, userId: string) {
     const tx = await this.txModel.findOne({

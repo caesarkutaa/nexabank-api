@@ -110,6 +110,34 @@ export class AdminController {
     return this.adminService.creditDebitUser(dto, admin);
   }
 
+
+ @Delete('accounts/:id')
+@HttpCode(HttpStatus.OK)
+deleteAccount(@Param('id') id: string, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.deleteAccount(id, admin);
+}
+ 
+@Post('accounts/transfer/intrabank')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Admin intrabank transfer — creates tx in both users histories' })
+adminIntrabank(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.adminIntrabankTransfer(dto, admin);
+}
+ 
+@Post('accounts/transfer/interbank')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Admin ACH transfer' })
+adminInterbank(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.adminInterbankTransfer(dto, admin);
+}
+ 
+ @Post('accounts/transfer/international')
+ @HttpCode(HttpStatus.OK)
+ @ApiOperation({ summary: 'Admin international wire transfer' })
+ adminInternational(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+   return this.adminService.adminInternationalTransfer(dto, admin);
+ }
+
   // ── Transactions / Transfers ──────────────────────────────────
   @Get('transactions')
   @ApiOperation({ summary: 'Get all transactions with filters' })
@@ -150,6 +178,17 @@ export class AdminController {
   ) {
     return this.adminService.editReceipt(id, dto, admin);
   }
+
+  @Patch('users/:id/transfer-block')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Block or unblock a user from making transfers (can still log in)' })
+toggleTransferBlock(
+  @Param('id') id: string,
+  @Body() body: { transferBlocked: boolean; reason?: string },
+  @CurrentUser() admin: userSchema.UserDocument,
+) {
+  return this.adminService.toggleTransferBlock(id, body.transferBlocked, body.reason, admin);
+}
 
   // ── Loans ─────────────────────────────────────────────────────
   @Get('loans')

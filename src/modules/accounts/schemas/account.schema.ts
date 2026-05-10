@@ -20,8 +20,10 @@ export class Account {
   @Prop({ default: 0, min: 0 }) availableBalance: number;
   @Prop({ default: 0         }) pendingBalance:   number;
 
-  @Prop({ default: 'USD' }) currency: string;
+  @Prop({ default: 'USD' }) currency: string;    
   @Prop({ default: 0     }) interestRate: number;
+
+  @Prop({ default: false }) adminFrozen: boolean;
 
   // ── Analytics ─────────────────────────────────────────────────
   @Prop({ default: 0 }) totalDeposited:  number;

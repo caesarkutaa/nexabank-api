@@ -35,6 +35,8 @@ export class UsersController {
       city:        string;
       state:       string;
       zipCode:     string;
+      preferredCurrency: string;
+      
     }>,
   ) {
     return this.usersService.updateProfile(String(user._id), dto);

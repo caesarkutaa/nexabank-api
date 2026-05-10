@@ -13,4 +13,7 @@ export class LoginDto {
 
   @ApiProperty({ example: 'A1B2C3', description: 'Captcha session token' })
   @IsString() @IsNotEmpty() captchaToken: string;
+
+  @ApiProperty({ example: 'token123', description: 'Refresh token for users with 2FA enabled' })
+  @IsString() refreshToken?: string;
 }

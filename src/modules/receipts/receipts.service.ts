@@ -16,10 +16,10 @@ export class ReceiptsService {
 
   async generatePdfReceipt(transaction: any): Promise<string> {
     return new Promise((resolve, reject) => {
-      const doc    = new PDFDocument({ size: 'A4', margin: 50 }); // ← now constructable
+      const doc    = new PDFDocument({ size: 'A4', margin: 50 }); 
       const chunks: Buffer[] = [];
 
-      doc.on('data',  (chunk: Buffer) => chunks.push(chunk));      // ← chunk typed
+      doc.on('data',  (chunk: Buffer) => chunks.push(chunk));     
       doc.on('error', reject);
       doc.on('end', async () => {
         const buffer = Buffer.concat(chunks);

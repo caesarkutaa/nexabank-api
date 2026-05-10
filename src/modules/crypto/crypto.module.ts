@@ -1,27 +1,14 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CryptoController } from './crypto.controller';
-import { CryptoService } from './crypto.service';
-import { CryptoPayment, CryptoPaymentSchema } from './schemas/crypto-payment.schema';
-import { Account, AccountSchema } from '../accounts/schemas/account.schema';
-import { Transaction, TransactionSchema } from '../transactions/schemas/transaction.schema';
-import { OtpModule } from '../otp/otp.module';
-import { NotificationsModule } from '../notifications/notifications.module';
-import { ReceiptsModule } from '../receipts/receipts.module';
-
+import { CryptoAddress, CryptoAddressSchema } from '../admin/schemas/crypto-address.schema';
+ 
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: CryptoPayment.name, schema: CryptoPaymentSchema },
-      { name: Account.name,       schema: AccountSchema       },
-      { name: Transaction.name,   schema: TransactionSchema   },
+      { name: CryptoAddress.name, schema: CryptoAddressSchema },
     ]),
-    OtpModule,
-    NotificationsModule,
-    ReceiptsModule,
   ],
   controllers: [CryptoController],
-  providers:   [CryptoService],
-  exports:     [CryptoService],
 })
 export class CryptoModule {}

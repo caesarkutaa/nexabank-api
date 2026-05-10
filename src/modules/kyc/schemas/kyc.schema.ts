@@ -14,7 +14,7 @@ export class Kyc {
   documentType: string;
 
   @Prop() documentNumber:         string;
-  @Prop() documentFrontUrl:       string;
+  @Prop() documentFrontUrl:       string;    
   @Prop() documentFrontPublicId:  string;
   @Prop() documentBackUrl:        string;
   @Prop() documentBackPublicId:   string;

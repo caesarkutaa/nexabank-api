@@ -17,6 +17,7 @@ import { RegisterAdminDto } from './dto/register-admin.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { AdminLoginDto } from './dto/Admin login.dto';   
 import { PasswordReset, PasswordResetDocument } from './schemas/password-reset.schema';
 
 @Injectable()
@@ -24,9 +25,10 @@ export class AuthService {
   verifyResetOtp(email: string, otp: string) {
     throw new Error('Method not implemented.');
   }
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
-     @InjectModel(PasswordReset.name)         
+    @InjectModel(PasswordReset.name)
     private readonly resetModel: Model<PasswordResetDocument>,
     private jwtService:           JwtService,
     private config:               ConfigService,
@@ -37,25 +39,40 @@ export class AuthService {
   // ── Register ─────────────────────────────────────────────────
   async register(dto: RegisterDto) {
     const exists = await this.userModel.findOne({
-      $or: [{ email: dto.email.toLowerCase() }, { username: dto.username.toLowerCase() }],
+      $or: [
+        { email:    dto.email.toLowerCase()    },
+        { username: dto.username.toLowerCase() },
+      ],
     });
     if (exists) throw new ConflictException('Email or username already registered');
 
     const rounds = parseInt(this.config.get<string>('BCRYPT_ROUNDS', '12'), 10);
     const passwordHash = await bcrypt.hash(dto.password, rounds);
 
-    const user = await this.userModel.create({ ...dto, passwordHash, status: UserStatus.PENDING });
+    const user = await this.userModel.create({
+      ...dto,
+      passwordHash,
+      status: UserStatus.PENDING,
+    });
 
-    // Send email verification OTP
+    const userId = String(user._id);
+
     const otp = this.otpService.generate();
-    this.otpService.save(this.otpService.buildKey(String(user._id), 'email_verification'), otp);
+    const key = this.otpService.buildKey(userId, 'email_verification');
+    this.otpService.save(key, otp);
+
     await this.notificationsService.sendOtpEmail(user.email, otp, 'email_verification');
-    await this.notificationsService.sendWelcomeEmail(user.email, user.firstName || user.username);
+    await this.notificationsService.sendWelcomeEmail(
+      user.email,
+      user.firstName || user.username,
+    );
 
-    return { message: 'Registration successful. Check your email to verify your account.' };
+    return {
+      message: 'Registration successful. Check your email to verify your account.',
+      userId,
+      email:   user.email,
+    };
   }
-
-
 
   // ── Register Admin ────────────────────────────────────────────
   async registerAdmin(dto: RegisterAdminDto, ip: string) {
@@ -85,7 +102,6 @@ export class AuthService {
       kycStatus:     'approved',
     });
 
-    // Send welcome email to admin
     await this.notificationsService.sendAdminWelcomeEmail(
       admin.email,
       admin.firstName,
@@ -101,7 +117,6 @@ export class AuthService {
     };
   }
 
-
   // ── Validate (used by LocalStrategy) ─────────────────────────
   async validateUser(username: string, password: string): Promise<UserDocument> {
     const user = await this.userModel
@@ -110,7 +125,6 @@ export class AuthService {
 
     if (!user) throw new UnauthorizedException('Invalid username or password');
 
-    // Lockout check
     if (user.lockedUntil && user.lockedUntil > new Date()) {
       const mins = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
       throw new ForbiddenException(`Account locked. Try again in ${mins} minute(s).`);
@@ -125,7 +139,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid username or password');
     }
 
-    // Reset failed attempts
     await this.userModel.findByIdAndUpdate(user._id, { failedLoginAttempts: 0, lockedUntil: null });
     return user;
   }
@@ -146,7 +159,6 @@ export class AuthService {
       lastLoginIp: ip,
     });
 
-    // If 2FA enabled, send OTP instead of immediate login
     if (user.twoFactorEnabled) {
       return { requiresTwoFactor: true, userId: user._id };
     }
@@ -159,6 +171,138 @@ export class AuthService {
     };
   }
 
+  // ── Admin Login ───────────────────────────────────────────────
+  // Separate from the user login flow. Uses its own endpoint
+  // POST /auth/admin/login, enforces role = admin | super_admin,
+  // and issues the same JWT shape so AdminGuard works transparently.
+  async adminLogin(dto: AdminLoginDto, ip: string) {
+    // 1. Find by email OR username
+    const user = await this.userModel
+      .findOne({
+        $or: [
+          { email:    dto.identifier.toLowerCase() },
+          { username: dto.identifier.toLowerCase() },
+        ],
+      })
+      .select('+passwordHash');
+
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+
+    // 2. Enforce admin role — reject regular users immediately
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'Access denied. This portal is for administrators only.',
+      );
+    }
+
+    // 3. Account status check
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new ForbiddenException(
+        'Admin account suspended. Contact the system administrator.',
+      );
+    }
+
+    // 4. Lockout check
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const mins = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      throw new ForbiddenException(`Account locked. Try again in ${mins} minute(s).`);
+    }
+
+    // 5. Password verification
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) {
+      await this.recordFailedLogin(user);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // 6. Reset failed attempts on success
+    await this.userModel.findByIdAndUpdate(user._id, {
+      failedLoginAttempts: 0,
+      lockedUntil:         null,
+      lastLoginAt:         new Date(),
+      lastLoginIp:         ip,
+    });
+
+    // 7. Issue tokens — same payload as user login so AdminGuard works
+    const payload      = { sub: user._id, username: user.username, role: user.role };
+    const accessToken  = this.jwtService.sign(payload);
+    const refreshToken = this.jwtService.sign(payload, {
+      secret:    this.config.get('JWT_REFRESH_SECRET'),
+      expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN'),
+    });
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    await this.userModel.findByIdAndUpdate(user._id, { refreshTokenHash });
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id:        String(user._id),
+        username:  user.username,
+        email:     user.email,
+        firstName: user.firstName,
+        lastName:  user.lastName,
+        role:      user.role,
+      },
+    };
+  }
+
+  // ── Admin Profile ─────────────────────────────────────────────
+  // Called by GET /auth/admin/me from the admin layout on mount.
+  async getAdminProfile(userId: string) {
+    const user = await this.userModel
+      .findById(userId)
+      .select('-passwordHash -refreshTokenHash -twoFactorSecret -securityPinHash');
+    if (!user) throw new NotFoundException('Admin not found');
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Access denied');
+    }
+    return user;
+  }
+
+  // ── Logout ────────────────────────────────────────────────────
+  async logout(userId: string) {
+    await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash: null });
+    return { message: 'Logged out successfully' };
+  }
+
+  // ── Forgot Password ───────────────────────────────────────────
+  async forgotPassword(dto: ForgotPasswordDto, ip: string) {
+    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
+
+    const genericResponse = {
+      message: 'If an account with that email exists, a reset code has been sent.',
+    };
+
+    if (!user) return genericResponse;
+    if (user.status === UserStatus.SUSPENDED) return genericResponse;
+
+    await this.resetModel.updateMany(
+      { userId: user._id, used: false },
+      { used: true },
+    );
+
+    const otp       = this.otpService.generate();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const tokenHash = await bcrypt.hash(otp, 10);
+
+    await this.resetModel.create({
+      userId:    user._id,
+      token:     tokenHash,
+      expiresAt,
+      ipAddress: ip,
+      used:      false,
+    });
+
+    await this.notificationsService.sendPasswordResetEmail(
+      user.email,
+      user.firstName || user.username,
+      otp,
+    );
+
+    return genericResponse;
+  }
 
   // ── Reset Password ────────────────────────────────────────────
   async resetPassword(dto: ResetPasswordDto, ip: string) {
@@ -168,7 +312,6 @@ export class AuthService {
     const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
     if (!user) throw new BadRequestException('Invalid request');
 
-    // Find valid reset record
     const resetRecord = await this.resetModel.findOne({
       userId:    user._id,
       used:      false,
@@ -180,14 +323,12 @@ export class AuthService {
     const isValid = await bcrypt.compare(dto.otp, resetRecord.token);
     if (!isValid) throw new BadRequestException('Invalid reset code');
 
-    // Check new password is not same as current
     const isSame = await bcrypt.compare(dto.newPassword, user.passwordHash);
     if (isSame) throw new BadRequestException('New password cannot be the same as your current password');
 
     const rounds       = this.config.get<number>('BCRYPT_ROUNDS', 12);
     const passwordHash = await bcrypt.hash(dto.newPassword, rounds);
 
-    // Update password and invalidate all sessions
     await this.userModel.findByIdAndUpdate(user._id, {
       passwordHash,
       refreshTokenHash:    null,
@@ -196,10 +337,8 @@ export class AuthService {
       status:              UserStatus.ACTIVE,
     });
 
-    // Mark reset token as used
     await this.resetModel.findByIdAndUpdate(resetRecord._id, { used: true });
 
-    // Send confirmation email
     await this.notificationsService.sendPasswordChangedEmail(
       user.email,
       user.firstName || user.username,
@@ -208,56 +347,6 @@ export class AuthService {
 
     return { message: 'Password reset successfully. Please login with your new password.' };
   }
-
-
- // ── Logout ────────────────────────────────────────────────────
-  async logout(userId: string) {
-    await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash: null });
-    return { message: 'Logged out successfully' };
-  }
-
-  // ── Forgot Password ───────────────────────────────────────────
-  async forgotPassword(dto: ForgotPasswordDto, ip: string) {
-    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
-
-    // Always return same response to prevent email enumeration
-    const genericResponse = {
-      message: 'If an account with that email exists, a reset code has been sent.',
-    };
-
-    if (!user) return genericResponse;
-    if (user.status === UserStatus.SUSPENDED) return genericResponse;
-
-    // Invalidate any existing reset tokens for this user
-    await this.resetModel.updateMany(
-      { userId: user._id, used: false },
-      { used: true },
-    );
-
-    // Generate 6-digit OTP
-    const otp       = this.otpService.generate();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-    const tokenHash = await bcrypt.hash(otp, 10);
-
-    await this.resetModel.create({
-      userId:    user._id,
-      token:     tokenHash,
-      expiresAt,
-      ipAddress: ip,
-      used:      false,
-    });
-
-    // Send reset email
-    await this.notificationsService.sendPasswordResetEmail(
-      user.email,
-      user.firstName || user.username,
-      otp,
-    );
-
-    return genericResponse;
-  }
-
-
 
   // ── Change Password (logged in) ───────────────────────────────
   async changePassword(userId: string, dto: ChangePasswordDto) {
@@ -273,18 +362,16 @@ export class AuthService {
     const isSame = await bcrypt.compare(dto.newPassword, user.passwordHash);
     if (isSame) throw new BadRequestException('New password cannot be the same as your current password');
 
-    const rounds       = this.config.get<number>('BCRYPT_ROUNDS', 12);
+    const rounds = parseInt(this.config.get<string>('BCRYPT_ROUNDS', '12'), 10);
     const passwordHash = await bcrypt.hash(dto.newPassword, rounds);
 
     await this.userModel.findByIdAndUpdate(userId, {
       passwordHash,
-      refreshTokenHash: null, // invalidate all existing sessions
+      refreshTokenHash: null,
     });
 
     return { message: 'Password changed successfully. Please login again.' };
   }
-
-
 
   // ── Verify Captcha ────────────────────────────────────────────
   verifyCaptcha(submitted: string, sessionCode: string): boolean {
@@ -301,31 +388,26 @@ export class AuthService {
 
   // ── 2FA Setup ─────────────────────────────────────────────────
   async setup2FA(userId: string) {
-  const user = await this.userModel.findById(userId);
-  if (!user) throw new NotFoundException('User not found');
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
 
-  const issuer = this.config.get<string>('TWO_FA_ISSUER', 'NexaBank');
+    const issuer = this.config.get<string>('TWO_FA_ISSUER', 'NexaBank');
 
-  const secret = speakeasy.generateSecret({
-    name:   `${issuer}:${user.email}`,
-    length: 32,
-  });
+    const secret = speakeasy.generateSecret({
+      name:   `${issuer}:${user.email}`,
+      length: 32,
+    });
 
-  // Build a guaranteed-valid otpauth URL with fallback
-  const otpauthUrl =
-    secret.otpauth_url ??
-    `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(user.email)}?secret=${secret.base32}&issuer=${encodeURIComponent(issuer)}`;
+    const otpauthUrl =
+      secret.otpauth_url ??
+      `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(user.email)}?secret=${secret.base32}&issuer=${encodeURIComponent(issuer)}`;
 
-  await this.userModel.findByIdAndUpdate(userId, { twoFactorSecret: secret.base32 });
+    await this.userModel.findByIdAndUpdate(userId, { twoFactorSecret: secret.base32 });
 
-  const qrCode = await qrcode.toDataURL(otpauthUrl);
+    const qrCode = await qrcode.toDataURL(otpauthUrl);
 
-  return {
-    secret:     secret.base32,
-    qrCode,                   
-    otpauthUrl,                
-  };
-}
+    return { secret: secret.base32, qrCode, otpauthUrl };
+  }
 
   async enable2FA(userId: string, token: string) {
     const user = await this.userModel.findById(userId).select('+twoFactorSecret');
@@ -365,12 +447,22 @@ export class AuthService {
 
   // ── Email Verification ────────────────────────────────────────
   async verifyEmail(userId: string, otp: string) {
-    this.otpService.verify(this.otpService.buildKey(userId, 'email_verification'), otp);
-    await this.userModel.findByIdAndUpdate(userId, { emailVerified: true, status: UserStatus.ACTIVE });
+    if (!userId || userId.trim() === '') {
+      throw new BadRequestException('userId is required');
+    }
+
+    const key = this.otpService.buildKey(userId.trim(), 'email_verification');
+    this.otpService.verify(key, otp);
+
+    await this.userModel.findByIdAndUpdate(userId.trim(), {
+      emailVerified: true,
+      status:        UserStatus.ACTIVE,
+    });
+
     return { message: 'Email verified successfully. Your account is now active.' };
   }
 
-  // ── Failed Login Handler ──────────────────────────────────────
+  // ── Private: Failed Login Handler ─────────────────────────────
   private async recordFailedLogin(user: UserDocument) {
     const max      = this.config.get<number>('MAX_LOGIN_ATTEMPTS', 5);
     const lockMins = this.config.get<number>('LOCKOUT_DURATION_MINUTES', 30);

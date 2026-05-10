@@ -21,6 +21,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ReceiptsModule } from './modules/receipts/receipts.module';
 import { ChequeDepositModule } from './modules/cheque-deposit/cheque-deposit.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { SettingsService } from './settings/settings.service';
 
 @Module({
   imports: [
@@ -62,6 +63,6 @@ import { AdminModule } from './modules/admin/admin.module';
     AdminModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [SettingsService],
 })
 export class AppModule {}

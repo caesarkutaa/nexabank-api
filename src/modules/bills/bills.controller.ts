@@ -39,6 +39,6 @@ export class BillsController {
   @Get('history')
   @ApiOperation({ summary: 'Get bill payment history' })
   history(@CurrentUser() user: UserDocument) {
-    return this.billsService.getUserBills(String(user._id));
+    return this.billsService.getUserBills(String(user._id));   
   }
 }

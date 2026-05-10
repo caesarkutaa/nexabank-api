@@ -219,6 +219,8 @@ async sendAdminWelcomeEmail(
         ${this.tableRow('Reference',        data.ref)}
         ${this.tableRow('Fee',              `$${data.fee.toFixed(2)}`)}
         ${this.tableRow('Balance After',    `$${data.balance.toFixed(2)}`)}
+        ${this.tableRow('Description',      data.description)}
+        ${this.tableRow('Merchant',         data.merchant)}
         ${this.tableRow('Date',             new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET')}
       </table>
       <p style="color:#888;font-size:12px;margin-top:20px">

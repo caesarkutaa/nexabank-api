@@ -54,7 +54,8 @@
     "speakeasy": "^2.0.0",
     "swagger-ui-express": "^5.0.1",
     "twilio": "^5.13.1",
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

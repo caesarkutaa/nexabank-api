@@ -32,4 +32,22 @@ export class RegisterDto {
 
   @ApiPropertyOptional({ example: '1990-05-15' })
   @IsOptional() @IsDateString() dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: 'USD' })
+  @IsOptional() @IsString() preferredCurrency?: string;
+
+  @ApiPropertyOptional({ example: 'USA' })
+  @IsOptional() @IsString() country?: string;
+
+  @ApiPropertyOptional({ example: 'California' })
+  @IsOptional() @IsString() state?: string;
+
+  @ApiPropertyOptional({ example: 'Los Angeles' })
+  @IsOptional() @IsString() city?: string;
+
+  @ApiPropertyOptional({ example: '123 Main St, Apt 4B' })    
+  @IsOptional() @IsString() address?: string;
+
+  @ApiPropertyOptional({ example: '90001' })
+  @IsOptional() @IsString() zipCode?: string;
 }

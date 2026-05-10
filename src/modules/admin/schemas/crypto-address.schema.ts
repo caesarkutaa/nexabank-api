@@ -1,28 +1,38 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-
+ 
 export type CryptoAddressDocument = CryptoAddress & Document;
-
-export enum CryptoNetwork {
-  BITCOIN = 'BTC',
-  ETHEREUM = 'ETH',
-  USDT_TRC20 = 'USDT_TRC20',
-  USDT_ERC20 = 'USDT_ERC20',
-  TRON = 'TRX',
-  LITECOIN = 'LTC',
-  BCH = 'BCH',
-}
-
-@Schema({ timestamps: true, collection: 'crypto_addresses' })
+ 
+@Schema({ timestamps: true, collection: 'cryptoaddresses' })
 export class CryptoAddress {
-  @Prop({ type: String, enum: CryptoNetwork, required: true, unique: true }) network: CryptoNetwork;
-  @Prop({ required: true }) address: string;
-  @Prop({ required: true }) label: string;
-  @Prop() qrCodeUrl: string;
-  @Prop({ default: true }) isActive: boolean;
-  @Prop() memo: string; // for some networks like XRP, STELLAR
-  @Prop() minimumDeposit: number;
-  @Prop() confirmationsRequired: number;
+  @Prop({ required: true, unique: true, index: true })
+  network: string;              
+ 
+  @Prop({ required: true })
+  coin: string;                
+ 
+  @Prop({ required: true })
+  address: string;              // The actual wallet address
+ 
+  @Prop()
+  label?: string;               
+ 
+  @Prop()
+  memo?: string;               
+  @Prop()
+  qrCodeUrl?: string;           
+ 
+  @Prop({ default: true })
+  isActive: boolean;            
+ 
+  @Prop({ default: 0 })
+  minimumDeposit: number;       
+  @Prop({ default: 1 })
+  confirmationsRequired: number; 
+ 
+  // Audit
+  @Prop()
+  lastUpdatedBy?: string;       
 }
 
-export const CryptoAddressSchema = SchemaFactory.createForClass(CryptoAddress);
+export const CryptoAddressSchema = SchemaFactory.createForClass(CryptoAddress)

@@ -3,7 +3,6 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Investment, InvestmentDocument, OrderAction, OrderStatus } from './schemas/investment.schema';
 import { Account, AccountDocument } from '../accounts/schemas/account.schema';
@@ -12,113 +11,104 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateReference } from '../../common/utils/generate-ref.util';
 import { BuyStockDto, SellStockDto } from './dto/buy-stock.dto';
 
+// Yahoo Finance public headers — no API key needed
+const YF_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json',
+};
+
 @Injectable()
 export class InvestmentsService {
   private readonly logger = new Logger(InvestmentsService.name);
-  private readonly alpacaHeaders: Record<string, string>;
-  private readonly alpacaBase: string;
 
   constructor(
     @InjectModel(Investment.name) private investmentModel: Model<InvestmentDocument>,
     @InjectModel(Account.name)    private accountModel:    Model<AccountDocument>,
     @InjectModel(Transaction.name) private txModel:        Model<TransactionDocument>,
-    private readonly config:               ConfigService,
     private readonly notificationsService: NotificationsService,
-  ) {
-    this.alpacaBase    = config.get<string>('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets');
-    this.alpacaHeaders = {
-      'APCA-API-KEY-ID':     config.get<string>('ALPACA_API_KEY', ''),
-      'APCA-API-SECRET-KEY': config.get<string>('ALPACA_SECRET_KEY', ''),
-      'Content-Type':        'application/json',
-    };
-  }
+  ) {}
 
-  // ── Get Real-Time Quote ───────────────────────────────────────
+  // ── Get Real-Time Quote (Yahoo Finance public API — no key needed) ─────────
   async getQuote(symbol: string) {
+    const sym = symbol.toUpperCase();
     try {
-      const { data } = await axios.get(
-        `https://data.alpaca.markets/v2/stocks/${symbol.toUpperCase()}/quotes/latest`,
-        { headers: this.alpacaHeaders },
-      );
-      const quote = data.quote;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`;
+      const { data } = await axios.get(url, { headers: YF_HEADERS, timeout: 8000 });
+
+      const result = data?.chart?.result?.[0];
+      if (!result) throw new Error('No data returned');
+
+      const meta  = result.meta as Record<string, any>;
+      const price: number = meta.regularMarketPrice ?? meta.previousClose ?? 0;
+      const prev:  number = meta.previousClose ?? meta.chartPreviousClose ?? price;
+      const change        = +(price - prev).toFixed(4);
+      const changePct     = prev > 0 ? +((change / prev) * 100).toFixed(4) : 0;
+
       return {
-        symbol:    symbol.toUpperCase(),
-        askPrice:  quote.ap,
-        bidPrice:  quote.bp,
-        midPrice:  +((quote.ap + quote.bp) / 2).toFixed(4),
-        timestamp: quote.t,
+        symbol:           sym,
+        askPrice:         price,
+        bidPrice:         price,
+        midPrice:         price,
+        change,
+        changePercent:    changePct,
+        companyName:      (meta.longName ?? meta.shortName ?? sym) as string,
+        currency:         (meta.currency ?? 'USD') as string,
+        marketState:      (meta.marketState ?? 'REGULAR') as string,
+        fiftyTwoWeekHigh: (meta.fiftyTwoWeekHigh ?? 0) as number,
+        fiftyTwoWeekLow:  (meta.fiftyTwoWeekLow  ?? 0) as number,
+        volume:           (meta.regularMarketVolume ?? 0) as number,
+        timestamp:        new Date().toISOString(),
       };
-    } catch {
-      throw new BadRequestException(`Could not fetch quote for symbol: ${symbol}`);
+    } catch (err: any) {
+      this.logger.error(`Yahoo Finance quote failed for ${sym}: ${err.message}`);
+      throw new BadRequestException(
+        `Could not fetch quote for "${sym}". Check the ticker symbol is valid (e.g. AAPL, MSFT, TSLA).`,
+      );
     }
   }
 
-  // ── Search Stocks ─────────────────────────────────────────────
+  // ── Search Stocks (Yahoo Finance autocomplete — no key needed) ─────────────
   async searchStocks(query: string) {
     try {
-      const { data } = await axios.get(
-        `${this.alpacaBase}/v2/assets?status=active&asset_class=us_equity&attributes=&search=${query}`,
-        { headers: this.alpacaHeaders },
-      );
-      return (data as any[]).slice(0, 20).map((a) => ({
-        symbol:    a.symbol,
-        name:      a.name,
-        exchange:  a.exchange,
-        tradable:  a.tradable,
-        fractionable: a.fractionable,
-      }));
-    } catch {
-      throw new BadRequestException('Stock search failed');
+      const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=15&newsCount=0&enableFuzzyQuery=false&quotesQueryId=tss_match_phrase_query`;
+      const { data } = await axios.get(url, { headers: YF_HEADERS, timeout: 8000 });
+
+      return ((data?.quotes ?? []) as any[])
+        .filter((q: any) => q.quoteType === 'EQUITY' && q.symbol)
+        .slice(0, 15)
+        .map((q: any) => ({
+          symbol:       q.symbol      as string,
+          name:         (q.longname ?? q.shortname ?? q.symbol) as string,
+          exchange:     (q.exchange ?? '') as string,
+          tradable:     true,
+          fractionable: false,
+        }));
+    } catch (err: any) {
+      this.logger.error(`Stock search failed: ${err.message}`);
+      throw new BadRequestException('Stock search failed. Try a different query.');
     }
   }
 
-  // ── Buy Stock ─────────────────────────────────────────────────
+  // ── Buy Stock ──────────────────────────────────────────────────────────────
   async buyStock(userId: string, dto: BuyStockDto, userEmail: string) {
     const account = await this.accountModel.findOne({
       _id:    new Types.ObjectId(dto.accountId),
       userId: new Types.ObjectId(userId),
     });
     if (!account) throw new NotFoundException('Account not found');
+    if (account.status !== 'active') throw new BadRequestException('Account is not active');
 
-    // Get current price
-    const quote      = await this.getQuote(dto.symbol);
+    // Get live price from Yahoo Finance
+    const quote         = await this.getQuote(dto.symbol);
     const pricePerShare = quote.midPrice;
     const totalCost     = +(pricePerShare * dto.shares).toFixed(2);
-    const fee           = +(totalCost * 0.001).toFixed(2); // 0.1% brokerage fee
+    const fee           = +(totalCost * 0.001).toFixed(2);   // 0.1% brokerage fee
     const totalDebit    = +(totalCost + fee).toFixed(2);
 
-    if (account.availableBalance < totalDebit)
-      throw new BadRequestException(`Insufficient funds. Required: $${totalDebit}, Available: $${account.availableBalance}`);
-
-    // Get asset info
-    let companyName = dto.symbol;
-    try {
-      const { data } = await axios.get(
-        `${this.alpacaBase}/v2/assets/${dto.symbol.toUpperCase()}`,
-        { headers: this.alpacaHeaders },
+    if (account.availableBalance < totalDebit) {
+      throw new BadRequestException(
+        `Insufficient funds. Required: $${totalDebit.toFixed(2)}, Available: $${account.availableBalance.toFixed(2)}`,
       );
-      companyName = (data as any).name ?? dto.symbol;
-    } catch { /* use symbol as name */ }
-
-    // Place order on Alpaca
-    let alpacaOrderId = '';
-    let orderStatus   = OrderStatus.FILLED;
-    try {
-      const { data: order } = await axios.post(
-        `${this.alpacaBase}/v2/orders`,
-        {
-          symbol:        dto.symbol.toUpperCase(),
-          qty:           dto.shares,
-          side:          'buy',
-          type:          'market',
-          time_in_force: 'day',
-        },
-        { headers: this.alpacaHeaders },
-      );
-      alpacaOrderId = (order as any).id;
-      orderStatus   = (order as any).status === 'filled' ? OrderStatus.FILLED : OrderStatus.PENDING;
-    } catch (err) {
-      this.logger.warn('Alpaca order failed, recording locally', err);
     }
 
     const ref = generateReference('INV');
@@ -131,55 +121,56 @@ export class InvestmentsService {
 
     // Record transaction
     await this.txModel.create({
-      userId:      new Types.ObjectId(userId),
-      accountId:   account._id,
+      userId:          new Types.ObjectId(userId),
+      accountId:       account._id,
       referenceNumber: ref,
-      type:        TransactionType.INVESTMENT,
-      status:      TransactionStatus.COMPLETED,
-      direction:   TransactionDirection.DEBIT,
-      amount:      totalCost,
+      type:            TransactionType.INVESTMENT,
+      status:          TransactionStatus.COMPLETED,
+      direction:       TransactionDirection.DEBIT,
+      amount:          totalCost,
       fee,
-      currency:    'USD',
-      description: `Buy ${dto.shares} shares of ${dto.symbol.toUpperCase()}`,
-      balanceAfter: account.balance,
-      processedAt: new Date(),
-      metadata:    { symbol: dto.symbol, shares: dto.shares, pricePerShare },
+      currency:        'USD',
+      description:     `Buy ${dto.shares} shares of ${dto.symbol.toUpperCase()} @ $${pricePerShare}`,
+      balanceAfter:    account.balance,
+      processedAt:     new Date(),
+      metadata:        { symbol: dto.symbol, shares: dto.shares, pricePerShare, source: 'yahoo_finance' },
     });
 
-    // Record investment
+    // Record investment position
     const investment = await this.investmentModel.create({
-      userId:        new Types.ObjectId(userId),
-      accountId:     account._id,
-      symbol:        dto.symbol.toUpperCase(),
-      companyName,
-      shares:        dto.shares,
-      buyPrice:      pricePerShare,
-      currentPrice:  pricePerShare,
-      totalInvested: totalCost,
-      currentValue:  totalCost,
-      profitLoss:    0,
+      userId:          new Types.ObjectId(userId),
+      accountId:       account._id,
+      symbol:          dto.symbol.toUpperCase(),
+      companyName:     quote.companyName,
+      shares:          dto.shares,
+      buyPrice:        pricePerShare,
+      currentPrice:    pricePerShare,
+      totalInvested:   totalCost,
+      currentValue:    totalCost,
+      profitLoss:      0,
       profitLossPercent: 0,
-      action:        OrderAction.BUY,
-      orderStatus,
-      alpacaOrderId,
+      action:          OrderAction.BUY,
+      orderStatus:     OrderStatus.FILLED,   // simulated — no real broker
+      alpacaOrderId:   '',                   // no broker integration
       referenceNumber: ref,
-      filledAt:      new Date(),
+      filledAt:        new Date(),
     });
 
     return {
-      success: true,
+      success:         true,
       referenceNumber: ref,
-      symbol:  dto.symbol.toUpperCase(),
-      shares:  dto.shares,
+      symbol:          dto.symbol.toUpperCase(),
+      shares:          dto.shares,
       pricePerShare,
       totalCost,
       fee,
       totalDebit,
       investment,
+      message: `Successfully bought ${dto.shares} share${dto.shares !== 1 ? 's' : ''} of ${dto.symbol.toUpperCase()} at $${pricePerShare} per share.`,
     };
   }
 
-  // ── Sell Stock ────────────────────────────────────────────────
+  // ── Sell Stock ─────────────────────────────────────────────────────────────
   async sellStock(userId: string, dto: SellStockDto, userEmail: string) {
     const investment = await this.investmentModel.findOne({
       _id:    new Types.ObjectId(dto.investmentId),
@@ -187,8 +178,11 @@ export class InvestmentsService {
       action: OrderAction.BUY,
     });
     if (!investment) throw new NotFoundException('Investment position not found');
-    if (dto.sharesToSell > investment.shares)
-      throw new BadRequestException(`Cannot sell ${dto.sharesToSell} shares. You own ${investment.shares}.`);
+    if (dto.sharesToSell > investment.shares) {
+      throw new BadRequestException(
+        `Cannot sell ${dto.sharesToSell} shares — you only own ${investment.shares}.`,
+      );
+    }
 
     const account = await this.accountModel.findOne({
       _id:    new Types.ObjectId(dto.accountId),
@@ -196,42 +190,26 @@ export class InvestmentsService {
     });
     if (!account) throw new NotFoundException('Account not found');
 
-    const quote          = await this.getQuote(investment.symbol);
-    const sellPrice      = quote.midPrice;
-    const proceeds       = +(sellPrice * dto.sharesToSell).toFixed(2);
-    const fee            = +(proceeds * 0.001).toFixed(2);
-    const netProceeds    = +(proceeds - fee).toFixed(2);
-    const costBasis      = +(investment.buyPrice * dto.sharesToSell).toFixed(2);
-    const profitLoss     = +(netProceeds - costBasis).toFixed(2);
-    const ref            = generateReference('INV');
+    // Get current price
+    const quote       = await this.getQuote(investment.symbol);
+    const sellPrice   = quote.midPrice;
+    const proceeds    = +(sellPrice * dto.sharesToSell).toFixed(2);
+    const fee         = +(proceeds * 0.001).toFixed(2);
+    const netProceeds = +(proceeds - fee).toFixed(2);
+    const costBasis   = +(investment.buyPrice * dto.sharesToSell).toFixed(2);
+    const profitLoss  = +(netProceeds - costBasis).toFixed(2);
+    const ref         = generateReference('INV');
 
-    // Place sell order on Alpaca
-    try {
-      await axios.post(
-        `${this.alpacaBase}/v2/orders`,
-        {
-          symbol:        investment.symbol,
-          qty:           dto.sharesToSell,
-          side:          'sell',
-          type:          'market',
-          time_in_force: 'day',
-        },
-        { headers: this.alpacaHeaders },
-      );
-    } catch (err) {
-      this.logger.warn('Alpaca sell order failed, recording locally', err);
-    }
-
-    // Update or close position
-    const remainingShares = investment.shares - dto.sharesToSell;
+    // Update or close the position
+    const remainingShares = +(investment.shares - dto.sharesToSell).toFixed(6);
     if (remainingShares <= 0) {
       await this.investmentModel.findByIdAndDelete(investment._id);
     } else {
       await this.investmentModel.findByIdAndUpdate(investment._id, {
-        shares:       remainingShares,
+        shares:        remainingShares,
         totalInvested: +(investment.buyPrice * remainingShares).toFixed(2),
-        currentPrice: sellPrice,
-        currentValue: +(sellPrice * remainingShares).toFixed(2),
+        currentPrice:  sellPrice,
+        currentValue:  +(sellPrice * remainingShares).toFixed(2),
       });
     }
 
@@ -243,43 +221,50 @@ export class InvestmentsService {
 
     // Record sell transaction
     await this.txModel.create({
-      userId:      new Types.ObjectId(userId),
-      accountId:   account._id,
+      userId:          new Types.ObjectId(userId),
+      accountId:       account._id,
       referenceNumber: ref,
-      type:        TransactionType.INVESTMENT,
-      status:      TransactionStatus.COMPLETED,
-      direction:   TransactionDirection.CREDIT,
-      amount:      netProceeds,
+      type:            TransactionType.INVESTMENT,
+      status:          TransactionStatus.COMPLETED,
+      direction:       TransactionDirection.CREDIT,
+      amount:          netProceeds,
       fee,
-      currency:    'USD',
-      description: `Sell ${dto.sharesToSell} shares of ${investment.symbol}`,
-      balanceAfter: account.balance,
-      processedAt: new Date(),
-      metadata:    { symbol: investment.symbol, shares: dto.sharesToSell, sellPrice, profitLoss },
+      currency:        'USD',
+      description:     `Sell ${dto.sharesToSell} shares of ${investment.symbol} @ $${sellPrice}`,
+      balanceAfter:    account.balance,
+      processedAt:     new Date(),
+      metadata:        { symbol: investment.symbol, shares: dto.sharesToSell, sellPrice, profitLoss, source: 'yahoo_finance' },
     });
 
-    // Record sell investment entry
+    // Record sell entry for history
     await this.investmentModel.create({
-      userId:        new Types.ObjectId(userId),
-      accountId:     account._id,
-      symbol:        investment.symbol,
-      companyName:   investment.companyName,
-      shares:        dto.sharesToSell,
-      buyPrice:      sellPrice,
-      currentPrice:  sellPrice,
-      totalInvested: proceeds,
-      currentValue:  netProceeds,
+      userId:          new Types.ObjectId(userId),
+      accountId:       account._id,
+      symbol:          investment.symbol,
+      companyName:     investment.companyName,
+      shares:          dto.sharesToSell,
+      buyPrice:        sellPrice,
+      currentPrice:    sellPrice,
+      totalInvested:   proceeds,
+      currentValue:    netProceeds,
       profitLoss,
-      action:        OrderAction.SELL,
-      orderStatus:   OrderStatus.FILLED,
+      action:          OrderAction.SELL,
+      orderStatus:     OrderStatus.FILLED,
       referenceNumber: ref,
-      filledAt:      new Date(),
+      filledAt:        new Date(),
     });
 
-    return { success: true, referenceNumber: ref, netProceeds, profitLoss, fee };
+    return {
+      success:         true,
+      referenceNumber: ref,
+      netProceeds,
+      profitLoss,
+      fee,
+      message: `Successfully sold ${dto.sharesToSell} share${dto.sharesToSell !== 1 ? 's' : ''} of ${investment.symbol}. Net proceeds: $${netProceeds}.`,
+    };
   }
 
-  // ── Portfolio ─────────────────────────────────────────────────
+  // ── Portfolio (with live prices) ───────────────────────────────────────────
   async getPortfolio(userId: string) {
     const positions = await this.investmentModel
       .find({ userId: new Types.ObjectId(userId), action: OrderAction.BUY })
@@ -291,14 +276,23 @@ export class InvestmentsService {
     const enriched = await Promise.all(
       positions.map(async (p) => {
         try {
-          const quote       = await this.getQuote(p.symbol);
-          const currentVal  = +(quote.midPrice * p.shares).toFixed(2);
-          const pl          = +(currentVal - p.totalInvested).toFixed(2);
-          const plPct       = +((pl / p.totalInvested) * 100).toFixed(2);
-          totalInvested    += p.totalInvested;
-          totalValue       += currentVal;
-          return { ...p, currentPrice: quote.midPrice, currentValue: currentVal, profitLoss: pl, profitLossPercent: plPct };
+          const quote      = await this.getQuote(p.symbol);
+          const currentVal = +(quote.midPrice * p.shares).toFixed(2);
+          const pl         = +(currentVal - p.totalInvested).toFixed(2);
+          const plPct      = p.totalInvested > 0 ? +((pl / p.totalInvested) * 100).toFixed(2) : 0;
+          totalInvested   += p.totalInvested;
+          totalValue      += currentVal;
+          return {
+            ...p,
+            currentPrice:      quote.midPrice,
+            currentValue:      currentVal,
+            profitLoss:        pl,
+            profitLossPercent: plPct,
+            change:            quote.change,
+            changePercent:     quote.changePercent,
+          };
         } catch {
+          // If quote fails, use stored values
           totalInvested += p.totalInvested;
           totalValue    += p.currentValue;
           return p;
@@ -307,7 +301,9 @@ export class InvestmentsService {
     );
 
     const totalProfitLoss    = +(totalValue - totalInvested).toFixed(2);
-    const totalProfitLossPct = totalInvested > 0 ? +((totalProfitLoss / totalInvested) * 100).toFixed(2) : 0;
+    const totalProfitLossPct = totalInvested > 0
+      ? +((totalProfitLoss / totalInvested) * 100).toFixed(2)
+      : 0;
 
     return {
       positions: enriched,
@@ -321,7 +317,7 @@ export class InvestmentsService {
     };
   }
 
-  // ── History ───────────────────────────────────────────────────
+  // ── History ────────────────────────────────────────────────────────────────
   async getHistory(userId: string) {
     return this.investmentModel
       .find({ userId: new Types.ObjectId(userId) })
