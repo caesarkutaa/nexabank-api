@@ -171,12 +171,19 @@ export class AuthController {
   // ── Security PIN ──────────────────────────────────────────────
 
   @Post('security-pin/set')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT')
-  @ApiOperation({ summary: 'Set 6-digit security PIN' })
-  setPin(@CurrentUser() user: UserDocument, @Body() body: { pin: string }) {
-    return this.authService.setSecurityPin(String(user._id), body.pin);
-  }
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('JWT')
+@ApiOperation({ summary: 'Set or update 6-digit security PIN' })
+setPin(
+  @CurrentUser() user: UserDocument,
+  @Body() body: { pin: string; confirmPin: string },
+) {
+  return this.authService.setSecurityPin(
+    String(user._id),
+    body.pin,
+    body.confirmPin,
+  );
+}
 
   @Post('security-pin/verify')
   @UseGuards(JwtAuthGuard)
@@ -185,6 +192,15 @@ export class AuthController {
   verifyPin(@CurrentUser() user: UserDocument, @Body() body: { pin: string }) {
     return this.authService.verifySecurityPin(String(user._id), body.pin);
   }
+
+@Get('me')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('JWT')
+@ApiOperation({ summary: 'Get current authenticated user profile' })
+getMe(@CurrentUser() user: UserDocument) {
+  return this.authService.getMe(String(user._id));
+}
+
 
   // ══════════════════════════════════════════════════════════════
   // ADMIN AUTH  —  completely separate from user login flow

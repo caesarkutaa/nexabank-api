@@ -12,6 +12,8 @@ export enum TransactionType {
   BILL_PAYMENT            = 'bill_payment',
   CHEQUE_DEPOSIT          = 'cheque_deposit',
   CRYPTO_PAYMENT          = 'crypto_payment',
+  CRYPTO_PURCHASE         = 'crypto_purchase',   
+  CRYPTO_SALE             = 'crypto_sale',       
   INVESTMENT              = 'investment',
   LOAN_DISBURSEMENT       = 'loan_disbursement',
   LOAN_REPAYMENT          = 'loan_repayment',

@@ -6,7 +6,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { ConfigService } from '@nestjs/config';
-
+   
 import { User, UserDocument, UserStatus, UserRole, CreditRating } from '../users/schemas/user.schema';
 import { Account, AccountDocument, AccountStatus, AccountType } from '../accounts/schemas/account.schema';
 import { Transaction, TransactionDocument, TransactionType, TransactionStatus, TransactionDirection } from '../transactions/schemas/transaction.schema';
@@ -21,6 +21,8 @@ import { OtpConfig, OtpConfigDocument } from './schemas/otp-config.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { generateAccountNumber, generateRoutingNumber, generateReference } from '../../common/utils/generate-ref.util';
+import { CryptoInvestment, CryptoInvestmentDocument } from '../crypto/schemas/crypto-investment.schema';
+
 
 import {
   CreateUserAdminDto, CreateAccountAdminDto, CreditDebitUserDto,
@@ -44,6 +46,7 @@ export class AdminService {
     @InjectModel(AdminLog.name)     private adminLogModel:     Model<AdminLogDocument>,
     @InjectModel(CryptoAddress.name) private cryptoAddrModel:  Model<CryptoAddressDocument>,
     @InjectModel(OtpConfig.name)    private otpConfigModel:    Model<OtpConfigDocument>,
+    @InjectModel(CryptoInvestment.name) private cryptoInvestModel: Model<CryptoInvestmentDocument>,
     private readonly notificationsService: NotificationsService,
     private readonly receiptsService:      ReceiptsService,
     private readonly config:               ConfigService,
@@ -209,13 +212,29 @@ export class AdminService {
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const user = await this.userModel.create({
-      ...dto,
-      passwordHash,
-      status:        dto.skipEmailVerification ? UserStatus.ACTIVE : UserStatus.PENDING,
-      emailVerified: dto.skipEmailVerification ?? false,
-      role:          dto.role ?? UserRole.USER,
-    });
-
+    ...dto,
+    passwordHash,
+    status:        dto.skipEmailVerification ? UserStatus.ACTIVE : UserStatus.PENDING,
+    emailVerified: dto.skipEmailVerification ?? false,
+    role:          dto.role ?? UserRole.USER,
+    // If skipKyc: set kycStatus to approved on the user document
+    kycStatus:     (dto as any).skipKyc ? 'approved' : 'not_started',
+    hasPinSet:     false,
+  });
+ 
+  // If skipKyc: also create a KYC document marked as approved
+  // so the KYC page and admin KYC list show it correctly
+  if ((dto as any).skipKyc) {
+    await this.kycModel.create({
+      userId:     user._id,
+      status:     'approved',
+      reviewedAt: new Date(),
+      reviewedBy: String(admin._id),
+      documentType:   'admin_verified',
+      documentNumber: 'ADMIN-BYPASS',
+    }).catch(() => null); // don't fail if KYC model isn't available here
+  }
+ 
     await this.log(admin, 'CREATE_USER', 'user', user._id as Types.ObjectId, {}, { username: dto.username, email: dto.email });
     return user;
   }
@@ -404,14 +423,17 @@ export class AdminService {
     userId:          account.userId,
     accountId:       account._id,
     referenceNumber: ref,
-    status:          TransactionStatus.COMPLETED,
-    direction:       dto.type === 'credit' ? TransactionDirection.CREDIT : TransactionDirection.DEBIT,
-    amount:          dto.amount,
-    fee:             0,
-    currency:        account.currency || 'USD',
-    description:     dto.reason,
-    balanceAfter:    account.balance,
-    processedAt:     new Date(),
+    // Use admin-supplied status, default to COMPLETED
+    status:      (dto as any).status ?? TransactionStatus.COMPLETED,
+    direction:   dto.type === 'credit' ? TransactionDirection.CREDIT : TransactionDirection.DEBIT,
+    amount:      dto.amount,
+    fee:         0,
+    currency:    account.currency || 'USD',
+    description: dto.reason,
+    balanceAfter: account.balance,
+    // Use admin-supplied date/time, default to now
+    processedAt: (dto as any).processedAt ? new Date((dto as any).processedAt) : new Date(),
+    createdAt:   (dto as any).processedAt ? new Date((dto as any).processedAt) : new Date(),
   };
  
   if (dto.type === 'credit') {
@@ -894,10 +916,11 @@ async adminInternationalTransfer(
       throw new BadRequestException('Loan must be approved before disbursement');
 
     // Credit to user primary account
-    const account = await this.accountModel.findOne({
-      userId:    loan.userId,
-      isPrimary: true,
-    });
+    const loanUserId = (loan.userId as any)?._id ?? loan.userId;
+       const account = await this.accountModel.findOne({
+       userId:    new Types.ObjectId(String(loanUserId)),
+       isPrimary: true,
+  });
     if (!account) throw new NotFoundException('User primary account not found');
 
     account.balance          += loan.approvedAmount;
@@ -956,37 +979,59 @@ async adminInternationalTransfer(
     return { kycs, pagination: { total, page, limit, pages: Math.ceil(total / limit) } };
   }
 
-  async reviewKyc(kycId: string, dto: ReviewKycDto, admin: UserDocument) {
-    const kyc = await this.kycModel.findById(kycId).populate('userId');
-    if (!kyc) throw new NotFoundException('KYC record not found');
-
-    const before  = { status: kyc.status };
-    const isApproved = dto.decision === 'approved';
-
-    await this.kycModel.findByIdAndUpdate(kycId, {
-      status:          dto.decision,
-      reviewedAt:      new Date(),
-      reviewedBy:      String(admin._id),
-      rejectionNote:   dto.notes,
-      identityVerified: isApproved,
-      documentVerified: isApproved,
-      addressVerified:  isApproved,
-    });
-
-    await this.userModel.findByIdAndUpdate(kyc.userId, { kycStatus: dto.decision });
-
-    const user = kyc.userId as any;
-    if (user?.email) {
-      await this.notificationsService.sendOtpEmail(
-        user.email,
-        '',
-        'email_verification',
-      ).catch(() => null);
+ async reviewKyc(
+  kycId:    string,
+  dto:      { status: string; rejectionNote?: string },
+  admin:    UserDocument,
+) {
+  // 1. Find and update the KYC document
+  const kyc = await this.kycModel.findByIdAndUpdate(
+    kycId,
+    {
+      status:        dto.status,
+      rejectionNote: dto.rejectionNote ?? undefined,
+      reviewedAt:    new Date(),
+      reviewedBy:    String(admin._id),
+    },
+    { new: true },
+  );
+ 
+  if (!kyc) throw new NotFoundException('KYC submission not found');
+ 
+  // 2. ← THIS IS THE MISSING STEP — sync User.kycStatus
+  //    Without this, loans/investments/transfers that check
+  //    user.kycStatus will still see the old value.
+  await this.userModel.findByIdAndUpdate(
+    kyc.userId,
+    { kycStatus: dto.status },   // mirrors the KYC document status exactly
+  );
+ 
+  // 3. Send notification to user
+  const user = await this.userModel.findById(kyc.userId);
+  if (user) {
+    if (dto.status === 'approved') {
+      await this.notificationsService
+        .sendKycApprovedEmail(user.email, user.firstName)
+        .catch(() => null);
+    } else if (dto.status === 'rejected' || dto.status === 'resubmit') {
+      await this.notificationsService
+        .sendKycRejectedEmail(user.email, user.firstName, dto.rejectionNote ?? '')
+        .catch(() => null);
     }
-
-    await this.log(admin, `KYC_${dto.decision.toUpperCase()}`, 'kyc', kyc._id as Types.ObjectId, before, { decision: dto.decision, notes: dto.notes });
-    return { message: `KYC ${dto.decision} successfully` };
   }
+ 
+  // 4. Audit log
+  await this.log(
+    admin,
+    `KYC_${dto.status.toUpperCase()}`,
+    'kyc',
+    kyc._id as Types.ObjectId,
+    { status: kyc.status },
+    { status: dto.status },
+  );
+ 
+  return { message: `KYC ${dto.status}`, kyc };
+}
 
   // ══════════════════════════════════════════════════════════════
   // CHEQUE MANAGEMENT
@@ -1092,30 +1137,33 @@ async adminInternationalTransfer(
   }
 
   async reviewInvestment(investmentId: string, dto: ReviewInvestmentDto, admin: UserDocument) {
-    const investment = await this.investmentModel.findById(investmentId);
-    if (!investment) throw new NotFoundException('Investment not found');
-
-    const before = { orderStatus: investment.orderStatus };
-    const newStatus = dto.decision === 'approved' ? OrderStatus.FILLED : OrderStatus.CANCELLED;
-
-    await this.investmentModel.findByIdAndUpdate(investmentId, {
-      orderStatus: newStatus,
-      filledAt:    dto.decision === 'approved' ? new Date() : undefined,
-    });
-
-    if (dto.decision === 'rejected') {
-      // Refund to account
-      const account = await this.accountModel.findById(investment.accountId);
-      if (account) {
-        account.balance          += investment.totalInvested;
-        account.availableBalance += investment.totalInvested;
-        await account.save();
-      }
+  const investment = await this.investmentModel.findById(investmentId);
+  if (!investment) throw new NotFoundException('Investment not found');
+ 
+  const before = { orderStatus: investment.orderStatus };
+  const newStatus = dto.decision === 'approved' ? OrderStatus.FILLED : OrderStatus.CANCELLED;
+ 
+  await this.investmentModel.findByIdAndUpdate(investmentId, {
+    orderStatus: newStatus,
+    ...(dto.decision === 'approved' ? { filledAt: new Date() } : {}),
+  });
+ 
+  if (dto.decision === 'rejected') {
+    const refundAmt = +(investment.totalInvested * 1.001).toFixed(2); // total + fee
+    const account = await this.accountModel.findById(investment.accountId);
+    if (account) {
+      account.balance          += refundAmt;
+      account.availableBalance += refundAmt;  
+      account.totalWithdrawn   = Math.max(0, account.totalWithdrawn - refundAmt);
+      await account.save();
     }
-
-    await this.log(admin, `INVESTMENT_${dto.decision.toUpperCase()}`, 'investment', investment._id as Types.ObjectId, before, dto);
-    return { message: `Investment ${dto.decision}` };
   }
+ 
+  await this.log(admin, `INVESTMENT_${dto.decision.toUpperCase()}`, 'investment',
+    investment._id as Types.ObjectId, before, { orderStatus: newStatus });
+ 
+  return { message: `Stock investment ${dto.decision}` };
+}
 
   // ══════════════════════════════════════════════════════════════
   // CRYPTO ADDRESS MANAGEMENT
@@ -1157,7 +1205,46 @@ async upsertCryptoAddress(dto: UpsertCryptoAddressDto, admin: UserDocument) {
   );
   return address;
 }
+ async reviewCryptoInvestment(
+    investmentId: string,
+    dto: ReviewInvestmentDto,
+    admin: UserDocument,
+  ) {
+    const investment = await this.cryptoInvestModel.findById(investmentId);
+    if (!investment) throw new NotFoundException('Crypto investment not found');
  
+    const before    = { orderStatus: investment.orderStatus };
+    const newStatus = dto.decision === 'approved' ? 'filled' : 'cancelled';
+ 
+    await this.cryptoInvestModel.findByIdAndUpdate(investmentId, {
+      orderStatus: newStatus,
+      ...(dto.decision === 'approved' ? { filledAt: new Date() } : {}),
+    });
+ 
+    if (dto.decision === 'rejected') {
+      const refund  = +(investment.amountUSD * 1.001).toFixed(2);
+      const account = await this.accountModel.findById(investment.accountId);
+      if (account) {
+        account.balance          += refund;
+        account.availableBalance += refund;
+        account.totalWithdrawn    = Math.max(0, account.totalWithdrawn - refund);
+        await account.save();
+      }
+    }
+ 
+    await this.log(
+      admin,
+      `CRYPTO_INVESTMENT_${dto.decision.toUpperCase()}`,
+      'crypto_investment',
+      investment._id as Types.ObjectId,
+      before,
+      { orderStatus: newStatus },
+    );
+ 
+    return { message: `Crypto investment ${dto.decision}` };
+  }
+
+
 async deleteCryptoAddress(network: string, admin: UserDocument) {
   const address = await this.cryptoAddrModel.findOneAndDelete({ network });
   if (!address) throw new NotFoundException('Crypto address not found');

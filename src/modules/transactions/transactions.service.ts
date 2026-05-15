@@ -9,13 +9,11 @@ export class TransactionsService {
     @InjectModel(Transaction.name) private txModel: Model<TransactionDocument>,
   ) {}
 
-  // In transactions.service.ts — make sure receiptUrl is included
-// and sort by processedAt OR createdAt (whichever is newer) so backdated
-// transactions still appear in their logical position
+ 
 
 async getTransactions(userId: string, query: any) {
   const filter: any = { userId: new Types.ObjectId(userId) };
-
+ 
   if (query.type)      filter.type      = query.type;
   if (query.direction) filter.direction = query.direction;
   if (query.status)    filter.status    = query.status;
@@ -24,33 +22,27 @@ async getTransactions(userId: string, query: any) {
     if (query.from) filter.createdAt.$gte = new Date(query.from);
     if (query.to)   filter.createdAt.$lte = new Date(query.to);
   }
-
+ 
   const page  = Number(query.page)  || 1;
   const limit = Number(query.limit) || 20;
-
+ 
   const [transactions, total] = await Promise.all([
     this.txModel
       .find(filter)
-      // ✅ exclude metadata so admin notes never leak to user
-      .select('-metadata')
-      // ✅ include receiptUrl explicitly (in case you have a restrictive select)
-      // Remove any .select() that might be blocking receiptUrl
-     .sort({
-          processedAt: -1,
-          createdAt: -1,
-          _id: -1,
-        })
+      .select('-metadata')          
+      .sort({ processedAt: -1, createdAt: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean(),
     this.txModel.countDocuments(filter),
   ]);
-
+ 
   return {
     transactions,
     pagination: { total, page, limit, pages: Math.ceil(total / limit) },
   };
 }
+ 
 
 
   async getTransactionById(txId: string, userId: string) {

@@ -9,6 +9,7 @@ import { UserRole } from '../../users/schemas/user.schema';
 import { AccountType } from '../../accounts/schemas/account.schema';
 import {CryptoAddress } from '../schemas/crypto-address.schema';
 
+
 // ── User Management ───────────────────────────────────────────
 export class CreateUserAdminDto {
   @ApiProperty({ example: 'jane_doe' })
@@ -29,6 +30,8 @@ export class CreateUserAdminDto {
 
   @ApiPropertyOptional({ default: false })
   @IsOptional() @IsBoolean() skipEmailVerification?: boolean;
+
+  
 }
 
 export class CreateAccountAdminDto {
@@ -46,6 +49,9 @@ export class CreateAccountAdminDto {
   @ApiPropertyOptional() @IsOptional() @IsString() senderName?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() senderAccount?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() senderBank?: string;
+    @IsOptional() @IsString() status?: string;
+  @ApiPropertyOptional({ description: 'Custom transaction date (ISO string)' })
+  @IsOptional() @IsString() processedAt?: string;
 }
  
 
@@ -198,9 +204,13 @@ export class DeclineLoanDto {
 // ── KYC Management ────────────────────────────────────────────
 export class ReviewKycDto {
   @ApiProperty({ enum: ['approved', 'rejected', 'resubmit'] })
-  @IsEnum(['approved', 'rejected', 'resubmit']) decision: string;
-
-  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @IsEnum(['approved', 'rejected', 'resubmit'])
+  status: string;             
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rejectionNote?: string;      
 }
 
 // ── Cheque Management ─────────────────────────────────────────
@@ -289,7 +299,6 @@ export class AdminQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() from?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() to?: string;
 
-  // ← NEW: allows filtering users by role (e.g. role=user to exclude admins)
   @ApiPropertyOptional({ enum: UserRole, description: 'Filter by user role' })
   @IsOptional() @IsEnum(UserRole) role?: UserRole;
 

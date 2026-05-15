@@ -43,6 +43,10 @@ export class User {
 
   // ── Security PIN ──────────────────────────────────────────────
   @Prop({ select: false }) securityPinHash: string;
+  @Prop({ default: false }) hasPinSet: boolean;
+
+@Prop({ default: 0 })    pinAttempts: number;   
+@Prop()                  pinLockedUntil: Date;    
 
   // ── Login Security ────────────────────────────────────────────
   @Prop({ default: 0 })  failedLoginAttempts: number;

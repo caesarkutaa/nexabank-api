@@ -17,6 +17,7 @@ import { Investment, InvestmentSchema } from '../investments/schemas/investment.
 
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ReceiptsModule } from '../receipts/receipts.module';
+import { CryptoInvestment, CryptoInvestmentSchema } from '../crypto/schemas/crypto-investment.schema';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ReceiptsModule } from '../receipts/receipts.module';
       { name: Kyc.name,           schema: KycSchema           },
       { name: ChequeDeposit.name, schema: ChequeDepositSchema },
       { name: Investment.name,    schema: InvestmentSchema    },
+      { name: CryptoInvestment.name, schema: CryptoInvestmentSchema },
     ]),
     NotificationsModule,
     ReceiptsModule,

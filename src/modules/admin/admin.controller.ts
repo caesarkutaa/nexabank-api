@@ -1,6 +1,7 @@
 import {
   Controller, Get, Post, Put, Patch, Delete,
   Body, Param, Query, UseGuards, HttpCode, HttpStatus, Ip,
+  Injectable,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth/jwt-auth.guard';
@@ -14,13 +15,22 @@ import {
   ReviewKycDto, ReviewChequeDto, ReviewInvestmentDto,
   UpsertCryptoAddressDto, EditReceiptDto, UpdateOtpConfigDto, AdminQueryDto,
 } from './dto/admin.dto';
+import { CryptoInvestment, CryptoInvestmentDocument } from '../crypto/schemas/crypto-investment.schema';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 @ApiTags('Admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 @ApiBearerAuth('JWT')
 @Controller('admin')
+@Injectable()
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+  @InjectModel(CryptoInvestment.name)
+  private readonly cryptoInvestModel: Model<CryptoInvestmentDocument>,
+  private readonly adminService: AdminService,
+ 
+  ) {}
 
   // ── Dashboard ─────────────────────────────────────────────────
   @Get('dashboard')
@@ -279,6 +289,52 @@ toggleTransferBlock(
   ) {
     return this.adminService.reviewInvestment(id, dto, admin);
   }
+
+@Get('crypto/invest/portfolio')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'All users crypto investment positions — admin view' })
+  async getAllCryptoInvestments(@Query() query: AdminQueryDto) {
+    const filter: any = {};
+    if (query.status) filter.orderStatus = query.status;
+ 
+    const page  = Number(query.page  ?? 1);
+    const limit = Number(query.limit ?? 50);
+ 
+    console.log('[ADMIN CRYPTO] getAllCryptoInvestments called, filter:', filter);
+ 
+    const [positions, total] = await Promise.all([
+      this.cryptoInvestModel
+        .find(filter)
+        .populate('userId',    'username email firstName lastName')
+        .populate('accountId', 'accountNumber accountType')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      this.cryptoInvestModel.countDocuments(filter),
+    ]);
+ 
+    console.log(`[ADMIN CRYPTO] found ${positions.length} positions, total: ${total}`);
+ 
+    return {
+      data: {
+        positions,
+        pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+      },
+    };
+  }
+ 
+  @Post('crypto/invest/:id/review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve or reject a crypto investment order' })
+  async reviewCryptoInvestment(
+    @Param('id') id: string,
+    @Body() dto: ReviewInvestmentDto,
+    @CurrentUser() admin: userSchema.UserDocument,
+  ) {
+    return this.adminService.reviewCryptoInvestment(id, dto, admin);
+  }
+  
 
   // ── Crypto Addresses ──────────────────────────────────────────
   @Get('crypto/addresses')

@@ -13,6 +13,11 @@ export class InitiateTransferDto {
 
   @ApiProperty({ example: 'intrabank', enum: ['intrabank','interbank','international'] })
   @IsString() @IsNotEmpty() type: string;
+
+  @ApiProperty({ example: '123456' })
+  @IsString() @IsNotEmpty() securityPin: string;
+ 
+ 
 }
 
 export class IntraBankTransferDto {
@@ -36,6 +41,10 @@ export class IntraBankTransferDto {
 
   @ApiProperty({ example: '000000' })
   @IsString() @IsNotEmpty() securityPin: string;
+
+   
+  @ApiProperty({ example: 'America/New_York' })
+  @IsOptional() @IsString() userTimezone?: string;
 }
 
 export class InterBankTransferDto {
@@ -62,6 +71,13 @@ export class InterBankTransferDto {
 
   @ApiProperty({ example: '123456' })
   @IsString() @IsNotEmpty() otp: string;
+
+  @ApiProperty({ example: '000000' })
+  @IsString() @IsNotEmpty() securityPin: string;  
+
+
+   @ApiProperty({ example: 'America/New_York' })
+  @IsOptional() @IsString() userTimezone?: string;
 }
 
 export class InternationalTransferDto {
@@ -94,4 +110,10 @@ export class InternationalTransferDto {
 
   @ApiProperty({ example: '123456' })
   @IsString() @IsNotEmpty() otp: string;
-}
+
+  @ApiProperty({ example: '000000' })
+  @IsString() @IsNotEmpty() securityPin: string;
+
+   @ApiProperty({ example: 'America/New_York' })
+  @IsOptional() @IsString() userTimezone?: string;
+}  

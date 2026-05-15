@@ -54,13 +54,7 @@ export class SettingsController {
   deleteCustomPage(@Param('key') key: string) {
     return this.settingsService.deleteCustomPage(key);
   }
-
-  /* ── Footer ──────────────────────────────────────────────── */
-  @Put('footer')
-  updateFooter(@Body() body: { sections: FooterSectionDto[] }) {
-    return this.settingsService.updateFooter(body.sections);
-  }
-
+    
   /* ── Admin change password ───────────────────────────────── */
   @Put('change-password')
   changePassword(
@@ -70,13 +64,7 @@ export class SettingsController {
     return this.settingsService.adminChangePassword(admin._id.toString(), dto);
   }
 }
-
-/* ─────────────────────────────────────────────────────────────────
-   PUBLIC endpoint — no auth — used by user-facing frontend to
-   know which pages to show and what the bank is called.
-   Mount this separately in app.module.ts at /api/v1/site-config
-───────────────────────────────────────────────────────────────── */
-@Controller('api/v1/site-config')
+@Controller('site-config')
 export class PublicSiteConfigController {
   constructor(private readonly settingsService: SettingsService) {}
 

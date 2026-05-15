@@ -261,6 +261,15 @@ export class AuthService {
     return user;
   }
 
+  async getMe(userId: string) {
+  const user = await this.userModel
+    .findById(userId)
+    .select('-passwordHash -refreshTokenHash -twoFactorSecret -securityPinHash')
+    .lean();
+  if (!user) throw new NotFoundException('User not found');
+  return user;
+}
+
   // ── Logout ────────────────────────────────────────────────────
   async logout(userId: string) {
     await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash: null });
@@ -430,12 +439,19 @@ export class AuthService {
   }
 
   // ── Security PIN ──────────────────────────────────────────────
-  async setSecurityPin(userId: string, pin: string) {
-    if (!/^\d{6}$/.test(pin)) throw new BadRequestException('PIN must be exactly 6 digits');
-    const pinHash = await bcrypt.hash(pin, 10);
-    await this.userModel.findByIdAndUpdate(userId, { securityPinHash: pinHash });
-    return { message: 'Security PIN set successfully' };
-  }
+  async setSecurityPin(userId: string, pin: string, confirmPin?: string) {
+  if (!/^\d{6}$/.test(pin))
+    throw new BadRequestException('PIN must be exactly 6 digits');
+  if (confirmPin !== undefined && pin !== confirmPin)
+    throw new BadRequestException('PINs do not match');
+ 
+  const pinHash = await bcrypt.hash(pin, 10);
+  await this.userModel.findByIdAndUpdate(userId, {
+    securityPinHash: pinHash,
+    hasPinSet:       true,       // ← marks setup as complete
+  });
+  return { message: 'Security PIN set successfully' };
+}
 
   async verifySecurityPin(userId: string, pin: string): Promise<boolean> {
     const user = await this.userModel.findById(userId).select('+securityPinHash');

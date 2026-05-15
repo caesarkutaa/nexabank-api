@@ -21,6 +21,8 @@ export class InitiateCryptoDto {
   @ApiPropertyOptional()
   @IsOptional() @IsString() description?: string;
 
-  @ApiProperty({ example: '123456' })
-  @IsString() @IsNotEmpty() otp: string;
+  @ApiPropertyOptional({ example: '123456' })
+  @IsOptional()
+  @IsString()
+  otp?: string;
 }

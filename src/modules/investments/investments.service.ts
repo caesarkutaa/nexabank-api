@@ -150,10 +150,9 @@ export class InvestmentsService {
       profitLoss:      0,
       profitLossPercent: 0,
       action:          OrderAction.BUY,
-      orderStatus:     OrderStatus.FILLED,   // simulated — no real broker
-      alpacaOrderId:   '',                   // no broker integration
+      orderStatus:     OrderStatus.PENDING,
+      alpacaOrderId:   '',                   
       referenceNumber: ref,
-      filledAt:        new Date(),
     });
 
     return {
@@ -172,11 +171,16 @@ export class InvestmentsService {
 
   // ── Sell Stock ─────────────────────────────────────────────────────────────
   async sellStock(userId: string, dto: SellStockDto, userEmail: string) {
-    const investment = await this.investmentModel.findOne({
-      _id:    new Types.ObjectId(dto.investmentId),
-      userId: new Types.ObjectId(userId),
-      action: OrderAction.BUY,
-    });
+     const investment = await this.investmentModel.findOne({
+    _id:         new Types.ObjectId(dto.investmentId),
+    userId:      new Types.ObjectId(userId),
+    action:      OrderAction.BUY,
+    orderStatus: OrderStatus.FILLED,   // ← ONLY filled positions can be sold
+  });
+  if (!investment) throw new NotFoundException(
+    'Investment position not found or not yet approved. Wait for admin approval before selling.',
+  );
+ 
     if (!investment) throw new NotFoundException('Investment position not found');
     if (dto.sharesToSell > investment.shares) {
       throw new BadRequestException(
@@ -266,15 +270,24 @@ export class InvestmentsService {
 
   // ── Portfolio (with live prices) ───────────────────────────────────────────
   async getPortfolio(userId: string) {
-    const positions = await this.investmentModel
-      .find({ userId: new Types.ObjectId(userId), action: OrderAction.BUY })
-      .lean();
-
+     const positions = await this.investmentModel
+    .find({
+      userId:      new Types.ObjectId(userId),
+      action:      OrderAction.BUY,
+      orderStatus: { $in: [OrderStatus.FILLED, OrderStatus.PENDING] },
+    })
+    .lean();
     let totalInvested = 0;
     let totalValue    = 0;
 
     const enriched = await Promise.all(
       positions.map(async (p) => {
+        // Pending orders haven't been filled yet — use stored values
+        if (p.orderStatus === OrderStatus.PENDING) {
+          totalInvested += p.totalInvested;
+          totalValue    += p.totalInvested; // same as invested until filled
+          return { ...p, currentPrice: p.buyPrice, currentValue: p.totalInvested, profitLoss: 0, profitLossPercent: 0 };
+        }
         try {
           const quote      = await this.getQuote(p.symbol);
           const currentVal = +(quote.midPrice * p.shares).toFixed(2);
@@ -282,23 +295,15 @@ export class InvestmentsService {
           const plPct      = p.totalInvested > 0 ? +((pl / p.totalInvested) * 100).toFixed(2) : 0;
           totalInvested   += p.totalInvested;
           totalValue      += currentVal;
-          return {
-            ...p,
-            currentPrice:      quote.midPrice,
-            currentValue:      currentVal,
-            profitLoss:        pl,
-            profitLossPercent: plPct,
-            change:            quote.change,
-            changePercent:     quote.changePercent,
-          };
+          return { ...p, currentPrice: quote.midPrice, currentValue: currentVal, profitLoss: pl, profitLossPercent: plPct, change: quote.change, changePercent: quote.changePercent };
         } catch {
-          // If quote fails, use stored values
           totalInvested += p.totalInvested;
           totalValue    += p.currentValue;
           return p;
         }
       }),
     );
+ 
 
     const totalProfitLoss    = +(totalValue - totalInvested).toFixed(2);
     const totalProfitLossPct = totalInvested > 0
