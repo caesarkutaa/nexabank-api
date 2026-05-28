@@ -9,7 +9,6 @@ import helmet from 'helmet';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
-  // ── CORS must come BEFORE helmet ──────────────────────────────
   app.enableCors({
     origin: (origin, callback) => {
       const allowed = [
@@ -25,8 +24,7 @@ async function bootstrap() {
       if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
         callback(null, true);
       } else {
-        callback(null, true); // ← temporarily allow all while debugging
-        // Once working, change to: callback(new Error('Not allowed by CORS'));
+        callback(null, true); 
       }
     },
     credentials: true,
