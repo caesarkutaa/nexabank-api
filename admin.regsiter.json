@@ -1,0 +1,315 @@
+{
+  "info": {
+    "name": "NexaBank — Auth (Register, Login, Forgot/Reset Password)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base",       "value": "http://localhost:3001/api/v1" },
+    { "key": "token",      "value": "" },
+    { "key": "userId",     "value": "" },
+    { "key": "captcha",    "value": "" },
+    { "key": "resetToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 Generate Captcha",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const r = pm.response.json();",
+        "if(r.data?.code) pm.collectionVariables.set('captcha', r.data.code);",
+        "pm.test('Has code', () => pm.expect(r.data.code).to.be.a('string').with.lengthOf(6));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base}}/auth/captcha/generate"
+      }
+    },
+    {
+      "name": "02 Register User",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const r = pm.response.json();",
+        "if(r.data?.userId) pm.collectionVariables.set('userId', r.data.userId);",
+        "pm.test('Status 201', () => pm.response.to.have.status(201));",
+        "pm.test('Has message', () => pm.expect(r.data.message).to.include('Registration'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"john_nexabank\",\n  \"email\": \"john.nexabank@gmail.com\",\n  \"password\": \"SecurePass@123\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phoneNumber\": \"+12125551234\",\n  \"dateOfBirth\": \"1990-05-15\"\n}"
+        },
+        "url": "{{base}}/auth/register"
+      }
+    },
+    {
+      "name": "03 Register Admin",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('Status 201', () => pm.response.to.have.status(201));",
+        "const r = pm.response.json();",
+        "pm.test('Role is admin', () => pm.expect(r.data.role).to.eql('admin'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_jane\",\n  \"email\": \"jane.admin@nexabank.com\",\n  \"password\": \"AdminPass@123\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Admin\",\n  \"phoneNumber\": \"+12125559876\",\n  \"adminSecretKey\": \"NEXABANK_ADMIN_SECRET_2024_CHANGE_THIS_IN_PRODUCTION\"\n}"
+        },
+        "url": "{{base}}/auth/register/admin"
+      }
+    },
+    {
+      "name": "04 Verify Email (paste OTP from email)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"otp\": \"PASTE_OTP_FROM_EMAIL\"\n}"
+        },
+        "url": "{{base}}/auth/verify-email"
+      }
+    },
+    {
+      "name": "05 Resend Verification OTP",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"email\": \"john.nexabank@gmail.com\"\n}"
+        },
+        "url": "{{base}}/auth/resend-otp"
+      }
+    },
+    {
+      "name": "06 Login (User)",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const r = pm.response.json();",
+        "if(r.data?.accessToken) {",
+        "  pm.collectionVariables.set('token', r.data.accessToken);",
+        "  pm.collectionVariables.set('userId', r.data.user?.id ?? '');",
+        "}",
+        "pm.test('Status 200', () => pm.response.to.have.status(200));",
+        "pm.test('Has accessToken', () => pm.expect(r.data.accessToken).to.be.a('string'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"john_nexabank\",\n  \"password\": \"SecurePass@123\",\n  \"captchaCode\": \"{{captcha}}\",\n  \"captchaToken\": \"{{captcha}}\"\n}"
+        },
+        "url": "{{base}}/auth/login"
+      }
+    },
+    {
+      "name": "07 Login (Admin)",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const r = pm.response.json();",
+        "if(r.data?.accessToken) pm.collectionVariables.set('adminToken', r.data.accessToken);",
+        "pm.test('Role is admin', () => pm.expect(r.data.user?.role).to.eql('admin'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin_jane\",\n  \"password\": \"AdminPass@123\",\n  \"captchaCode\": \"{{captcha}}\",\n  \"captchaToken\": \"{{captcha}}\"\n}"
+        },
+        "url": "{{base}}/auth/login"
+      }
+    },
+    {
+      "name": "08 Refresh Token",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('Status 200', () => pm.response.to.have.status(200));",
+        "const r = pm.response.json();",
+        "pm.test('Has new accessToken', () => pm.expect(r.data.accessToken).to.be.a('string'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"refreshToken\": \"PASTE_REFRESH_TOKEN_HERE\"\n}"
+        },
+        "url": "{{base}}/auth/refresh"
+      }
+    },
+    {
+      "name": "09 Logout",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('Status 200', () => pm.response.to.have.status(200));",
+        "const r = pm.response.json();",
+        "pm.test('Logged out', () => pm.expect(r.data.message).to.include('Logged out'));"
+      ]}}],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{base}}/auth/logout"
+      }
+    },
+    {
+      "name": "── FORGOT PASSWORD FLOW ──",
+      "item": [
+        {
+          "name": "Step 1 — Forgot Password (sends OTP to email)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const r = pm.response.json();",
+            "pm.test('Generic message returned', () => pm.expect(r.data.message).to.include('If an account'));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john.nexabank@gmail.com\"\n}"
+            },
+            "url": "{{base}}/auth/forgot-password"
+          }
+        },
+        {
+          "name": "Step 2 — Verify Reset OTP (get resetToken)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const r = pm.response.json();",
+            "if(r.data?.resetToken) pm.collectionVariables.set('resetToken', r.data.resetToken);",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Has resetToken', () => pm.expect(r.data.resetToken).to.be.a('string'));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john.nexabank@gmail.com\",\n  \"otp\": \"PASTE_OTP_FROM_EMAIL\"\n}"
+            },
+            "url": "{{base}}/auth/forgot-password/verify-otp"
+          }
+        },
+        {
+          "name": "Step 3 — Reset Password (new password)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const r = pm.response.json();",
+            "pm.test('Password reset', () => pm.expect(r.data.message).to.include('reset successfully'));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john.nexabank@gmail.com\",\n  \"otp\": \"PASTE_SAME_OTP_HERE\",\n  \"newPassword\": \"NewSecurePass@456\",\n  \"confirmPassword\": \"NewSecurePass@456\"\n}"
+            },
+            "url": "{{base}}/auth/reset-password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "── CHANGE PASSWORD (logged in) ──",
+      "item": [
+        {
+          "name": "Change Password",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const r = pm.response.json();",
+            "pm.test('Password changed', () => pm.expect(r.data.message).to.include('changed successfully'));"
+          ]}}],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"SecurePass@123\",\n  \"newPassword\": \"NewSecurePass@456\",\n  \"confirmPassword\": \"NewSecurePass@456\"\n}"
+            },
+            "url": "{{base}}/auth/change-password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "── 2FA FLOW ──",
+      "item": [
+        {
+          "name": "Setup 2FA (get QR code)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{base}}/auth/2fa/setup"
+          }
+        },
+        {
+          "name": "Enable 2FA (after scanning QR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"PASTE_6_DIGIT_TOTP\"\n}" },
+            "url": "{{base}}/auth/2fa/enable"
+          }
+        },
+        {
+          "name": "Verify 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"PASTE_6_DIGIT_TOTP\"\n}" },
+            "url": "{{base}}/auth/2fa/verify"
+          }
+        },
+        {
+          "name": "Disable 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"PASTE_6_DIGIT_TOTP\"\n}" },
+            "url": "{{base}}/auth/2fa/disable"
+          }
+        }
+      ]
+    },
+    {
+      "name": "── SECURITY PIN ──",
+      "item": [
+        {
+          "name": "Set Security PIN",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"pin\": \"123456\"\n}" },
+            "url": "{{base}}/auth/security-pin/set"
+          }
+        },
+        {
+          "name": "Verify Security PIN",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"pin\": \"123456\"\n}" },
+            "url": "{{base}}/auth/security-pin/verify"
+          }
+        }
+      ]
+    }
+  ]
+}

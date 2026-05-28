@@ -20,7 +20,8 @@ import { OtpModule } from './modules/otp/otp.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ReceiptsModule } from './modules/receipts/receipts.module';
 import { ChequeDepositModule } from './modules/cheque-deposit/cheque-deposit.module';
-import { AdminModule } from './modules/admin/admin.module';
+import { AdminModule } from './modules/admin/admin.module';;
+import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { AdminModule } from './modules/admin/admin.module';
     ReceiptsModule,
     ChequeDepositModule,
     AdminModule,
+    SettingsModule,
   ],
   controllers: [],
   providers: [],

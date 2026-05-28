@@ -1,6 +1,7 @@
 import {
   Controller, Get, Post, Put, Patch, Delete,
   Body, Param, Query, UseGuards, HttpCode, HttpStatus, Ip,
+  Injectable,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth/jwt-auth.guard';
@@ -14,13 +15,22 @@ import {
   ReviewKycDto, ReviewChequeDto, ReviewInvestmentDto,
   UpsertCryptoAddressDto, EditReceiptDto, UpdateOtpConfigDto, AdminQueryDto,
 } from './dto/admin.dto';
+import { CryptoInvestment, CryptoInvestmentDocument } from '../crypto/schemas/crypto-investment.schema';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 @ApiTags('Admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 @ApiBearerAuth('JWT')
 @Controller('admin')
+@Injectable()
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+  @InjectModel(CryptoInvestment.name)
+  private readonly cryptoInvestModel: Model<CryptoInvestmentDocument>,
+  private readonly adminService: AdminService,
+ 
+  ) {}
 
   // ── Dashboard ─────────────────────────────────────────────────
   @Get('dashboard')
@@ -110,6 +120,34 @@ export class AdminController {
     return this.adminService.creditDebitUser(dto, admin);
   }
 
+
+ @Delete('accounts/:id')
+@HttpCode(HttpStatus.OK)
+deleteAccount(@Param('id') id: string, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.deleteAccount(id, admin);
+}
+ 
+@Post('accounts/transfer/intrabank')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Admin intrabank transfer — creates tx in both users histories' })
+adminIntrabank(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.adminIntrabankTransfer(dto, admin);
+}
+ 
+@Post('accounts/transfer/interbank')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Admin ACH transfer' })
+adminInterbank(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+  return this.adminService.adminInterbankTransfer(dto, admin);
+}
+ 
+ @Post('accounts/transfer/international')
+ @HttpCode(HttpStatus.OK)
+ @ApiOperation({ summary: 'Admin international wire transfer' })
+ adminInternational(@Body() dto: any, @CurrentUser() admin: userSchema.UserDocument) {
+   return this.adminService.adminInternationalTransfer(dto, admin);
+ }
+
   // ── Transactions / Transfers ──────────────────────────────────
   @Get('transactions')
   @ApiOperation({ summary: 'Get all transactions with filters' })
@@ -150,6 +188,17 @@ export class AdminController {
   ) {
     return this.adminService.editReceipt(id, dto, admin);
   }
+
+  @Patch('users/:id/transfer-block')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Block or unblock a user from making transfers (can still log in)' })
+toggleTransferBlock(
+  @Param('id') id: string,
+  @Body() body: { transferBlocked: boolean; reason?: string },
+  @CurrentUser() admin: userSchema.UserDocument,
+) {
+  return this.adminService.toggleTransferBlock(id, body.transferBlocked, body.reason, admin);
+}
 
   // ── Loans ─────────────────────────────────────────────────────
   @Get('loans')
@@ -240,6 +289,52 @@ export class AdminController {
   ) {
     return this.adminService.reviewInvestment(id, dto, admin);
   }
+
+@Get('crypto/invest/portfolio')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'All users crypto investment positions — admin view' })
+  async getAllCryptoInvestments(@Query() query: AdminQueryDto) {
+    const filter: any = {};
+    if (query.status) filter.orderStatus = query.status;
+ 
+    const page  = Number(query.page  ?? 1);
+    const limit = Number(query.limit ?? 50);
+ 
+    console.log('[ADMIN CRYPTO] getAllCryptoInvestments called, filter:', filter);
+ 
+    const [positions, total] = await Promise.all([
+      this.cryptoInvestModel
+        .find(filter)
+        .populate('userId',    'username email firstName lastName')
+        .populate('accountId', 'accountNumber accountType')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      this.cryptoInvestModel.countDocuments(filter),
+    ]);
+ 
+    console.log(`[ADMIN CRYPTO] found ${positions.length} positions, total: ${total}`);
+ 
+    return {
+      data: {
+        positions,
+        pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+      },
+    };
+  }
+ 
+  @Post('crypto/invest/:id/review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve or reject a crypto investment order' })
+  async reviewCryptoInvestment(
+    @Param('id') id: string,
+    @Body() dto: ReviewInvestmentDto,
+    @CurrentUser() admin: userSchema.UserDocument,
+  ) {
+    return this.adminService.reviewCryptoInvestment(id, dto, admin);
+  }
+  
 
   // ── Crypto Addresses ──────────────────────────────────────────
   @Get('crypto/addresses')

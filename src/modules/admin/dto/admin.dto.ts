@@ -3,10 +3,12 @@ import {
   IsNumber, IsBoolean, IsEmail, IsDateString,
   Min, Max, IsMongoId,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '../../users/schemas/user.schema';
 import { AccountType } from '../../accounts/schemas/account.schema';
-import { CryptoNetwork } from '../schemas/crypto-address.schema';
+import {CryptoAddress } from '../schemas/crypto-address.schema';
+
 
 // ── User Management ───────────────────────────────────────────
 export class CreateUserAdminDto {
@@ -28,6 +30,8 @@ export class CreateUserAdminDto {
 
   @ApiPropertyOptional({ default: false })
   @IsOptional() @IsBoolean() skipEmailVerification?: boolean;
+
+  
 }
 
 export class CreateAccountAdminDto {
@@ -37,28 +41,148 @@ export class CreateAccountAdminDto {
   @ApiPropertyOptional() @IsOptional() @IsString() nickname?: string;
 }
 
-export class CreditDebitUserDto {
+ export class CreditDebitUserDto {
   @ApiProperty() @IsMongoId() accountId: string;
   @ApiProperty({ example: 1000 }) @IsNumber() @Min(0.01) amount: number;
   @ApiProperty({ enum: ['credit', 'debit'] }) @IsEnum(['credit', 'debit']) type: 'credit' | 'debit';
-  @ApiProperty({ example: 'Admin credit adjustment' }) @IsString() @IsNotEmpty() reason: string;
+  @ApiProperty({ example: 'Salary payment March 2026' }) @IsString() @IsNotEmpty() reason: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() senderName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() senderAccount?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() senderBank?: string;
+    @IsOptional() @IsString() status?: string;
+  @ApiPropertyOptional({ description: 'Custom transaction date (ISO string)' })
+  @IsOptional() @IsString() processedAt?: string;
 }
+ 
 
 // ── Transfer Management ───────────────────────────────────────
 export class UpdateTransferDto {
-  @ApiPropertyOptional({ enum: ['pending','processing','completed','failed','reversed','cancelled'] })
-  @IsOptional() @IsString() status?: string;
-
-  @ApiPropertyOptional() @IsOptional() @IsNumber() amount?: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() recipientName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() recipientAccountNumber?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() recipientBankName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() swiftCode?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() ibanNumber?: string;
-  @ApiPropertyOptional() @IsOptional() @IsDateString() processedAt?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() adminNotes?: string;
+  // ── Core ────────────────────────────────────────────────────────
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(['pending','processing','completed','failed','cancelled','reversed'])
+  status?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(['credit','debit'])
+  direction?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  type?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  amount?: number;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  fee?: number;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  currency?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  referenceNumber?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  balanceAfter?: number;
+ 
+  // ── Backdating ──────────────────────────────────────────────────
+  // Both fields accept any ISO 8601 string — admin can set any past or future date.
+  // The audit log always records the real time the edit was made.
+ 
+  @ApiPropertyOptional({ description: 'Backdate the transaction creation date (ISO string)' })
+  @IsOptional()
+  @IsString()
+  createdAt?: string;            // overrides Mongoose timestamps createdAt
+ 
+  @ApiPropertyOptional({ description: 'Backdate the processed/value date (ISO string)' })
+  @IsOptional()
+  @IsString()
+  processedAt?: string;
+ 
+  // ── Recipient ───────────────────────────────────────────────────
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  recipientName?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  recipientAccountNumber?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  recipientBankName?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  recipientRoutingNumber?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  recipientCountry?: string;
+ 
+  // ── Sender ──────────────────────────────────────────────────────
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  senderName?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  senderAccountNumber?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  senderBankName?: string;
+ 
+  // ── Wire / International ────────────────────────────────────────
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  swiftCode?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  ibanNumber?: string;
+ 
+  // ── Internal ────────────────────────────────────────────────────
+  @ApiPropertyOptional({ description: 'Admin notes — stored in metadata, never shown to user' })
+  @IsOptional()
+  @IsString()
+  adminNotes?: string;
 }
+
 
 export class BlockTransferDto {
   @ApiProperty() @IsMongoId() transactionId: string;
@@ -80,9 +204,13 @@ export class DeclineLoanDto {
 // ── KYC Management ────────────────────────────────────────────
 export class ReviewKycDto {
   @ApiProperty({ enum: ['approved', 'rejected', 'resubmit'] })
-  @IsEnum(['approved', 'rejected', 'resubmit']) decision: string;
-
-  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @IsEnum(['approved', 'rejected', 'resubmit'])
+  status: string;             
+ 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rejectionNote?: string;      
 }
 
 // ── Cheque Management ─────────────────────────────────────────
@@ -100,21 +228,45 @@ export class ReviewInvestmentDto {
 
   @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
 }
-
-// ── Crypto Address ────────────────────────────────────────────
+ 
 export class UpsertCryptoAddressDto {
-  @ApiProperty({ enum: CryptoNetwork }) @IsEnum(CryptoNetwork) network: CryptoNetwork;
-  @ApiProperty({ example: 'bc1qxy2kgdygjrsqtzq2n0yrf249abc123' })
-  @IsString() @IsNotEmpty() address: string;
-
-  @ApiProperty({ example: 'NexaBank Bitcoin Wallet' })
-  @IsString() @IsNotEmpty() label: string;
-
-  @ApiPropertyOptional() @IsOptional() @IsNumber() minimumDeposit?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() confirmationsRequired?: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() memo?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
+  @ApiProperty({ example: 'bitcoin' })
+  @IsString() @IsNotEmpty()
+  network: string;              // 'bitcoin' | 'ethereum' | 'tron' | 'usdt_trc20' | etc.
+ 
+  @ApiProperty({ example: 'BTC' })
+  @IsString() @IsNotEmpty()
+  coin: string;
+ 
+  @ApiProperty({ example: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh' })
+  @IsString() @IsNotEmpty()
+  address: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional() @IsString()
+  label?: string;
+ 
+  @ApiPropertyOptional({ description: 'Memo/Destination Tag for XRP, Stellar etc.' })
+  @IsOptional() @IsString()
+  memo?: string;
+ 
+  @ApiPropertyOptional()
+  @IsOptional() @IsString()
+  qrCodeUrl?: string;
+ 
+  @ApiPropertyOptional({ default: true })
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
+ 
+  @ApiPropertyOptional({ default: 0 })
+  @IsOptional() @IsNumber() @Min(0) @Type(() => Number)
+  minimumDeposit?: number;
+ 
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional() @IsNumber() @Min(1) @Type(() => Number)
+  confirmationsRequired?: number;
 }
+ 
 
 // ── Receipt Management ────────────────────────────────────────
 export class EditReceiptDto {
@@ -140,12 +292,16 @@ export class UpdateOtpConfigDto {
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) @Max(10) maxAttempts?: number;
 }
 
-// ── Dashboard Filters ─────────────────────────────────────────
+// ── Dashboard / List Filters ──────────────────────────────────
 export class AdminQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() search?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() from?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() to?: string;
+
+  @ApiPropertyOptional({ enum: UserRole, description: 'Filter by user role' })
+  @IsOptional() @IsEnum(UserRole) role?: UserRole;
+
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) page?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
 }

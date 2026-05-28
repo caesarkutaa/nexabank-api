@@ -7,12 +7,14 @@ import { Transaction, TransactionSchema } from '../transactions/schemas/transact
 import { OtpModule } from '../otp/otp.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ReceiptsModule } from '../receipts/receipts.module';  
+import { User, UserSchema } from '../users/schemas/user.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Account.name,     schema: AccountSchema     },
       { name: Transaction.name, schema: TransactionSchema },
+      { name: User.name,        schema: UserSchema        },
     ]),
     OtpModule,
     NotificationsModule,

@@ -1,6 +1,7 @@
 import {
   Controller, Post, Get, Patch, Delete,
   Body, Param, UseGuards, HttpCode, HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
@@ -43,6 +44,11 @@ export class AccountsController {
     return this.accountsService.getUserAccounts(String(user._id));
   }
 
+  @Get('lookup')
+lookup(@Query('accountNumber') accountNumber: string) {
+  return this.accountsService.lookupByAccountNumber(accountNumber);
+}
+     
   @Get('dashboard')
   @ApiOperation({ summary: 'Dashboard — balances, income %, debit % for current month' })
   dashboard(@CurrentUser() user: UserDocument) {

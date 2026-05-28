@@ -1,5 +1,5 @@
 import {
-  Injectable, NotFoundException, BadRequestException,
+  Injectable, BadRequestException, NotFoundException, ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -15,10 +15,13 @@ export class AccountsService {
 
     @InjectModel(Transaction.name)
     private readonly txModel: Model<TransactionDocument>,
+
+    @InjectModel('User') private readonly userModel: Model<any>,
   ) {}
 
   // ── Create Account ────────────────────────────────────────────
   async createAccount(userId: string, accountType: AccountType = AccountType.CHECKING) {
+    const user  = await this.userModel.findById(userId);
     const count = await this.accountModel.countDocuments({
       userId: new Types.ObjectId(userId),
     });
@@ -31,6 +34,7 @@ export class AccountsService {
       routingNumber: generateRoutingNumber(),
       accountType,
       isPrimary:     count === 0,
+      currency:      user?.preferredCurrency || 'USD',
     });
 
     return account;
@@ -61,7 +65,6 @@ export class AccountsService {
     const accounts     = await this.getUserAccounts(userId);
     const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
 
-    // Month-to-date aggregation
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
@@ -89,7 +92,7 @@ export class AccountsService {
 
     const credit = agg?.totalCredit ?? 0;
     const debit  = agg?.totalDebit  ?? 0;
-    const grand  = credit + debit || 1; // avoid division by zero
+    const grand  = credit + debit || 1;
 
     return {
       accounts,
@@ -103,7 +106,10 @@ export class AccountsService {
     };
   }
 
-  // ── Freeze / Unfreeze ─────────────────────────────────────────
+  // ── Freeze / Unfreeze (USER-INITIATED) ───────────────────────
+  // ⚠️ KEY RULE: If an account was frozen by admin (adminFrozen flag),
+  // the user CANNOT unfreeze it — they must contact support.
+  // Users can only freeze/unfreeze accounts they froze themselves.
   async toggleFreeze(accountId: string, userId: string) {
     const account = await this.accountModel.findOne({
       _id:    new Types.ObjectId(accountId),
@@ -113,15 +119,42 @@ export class AccountsService {
     if (account.status === AccountStatus.CLOSED)
       throw new BadRequestException('Cannot modify a closed account');
 
+    // Block user from unfreezing admin-frozen accounts
+    if (account.status === AccountStatus.FROZEN && account.adminFrozen) {
+      throw new ForbiddenException(
+        'This account has been frozen by our compliance team. ' +
+        'Please contact support@nexabank.com to resolve this.',
+      );
+    }
+
     const newStatus =
       account.status === AccountStatus.FROZEN
         ? AccountStatus.ACTIVE
         : AccountStatus.FROZEN;
 
-    await this.accountModel.findByIdAndUpdate(accountId, { status: newStatus });
+    // User action — never touches adminFrozen flag (admin controls that exclusively)
+    await this.accountModel.findByIdAndUpdate(accountId, {
+      status: newStatus,
+    });
+
     return {
       message: `Account ${newStatus === AccountStatus.FROZEN ? 'frozen' : 'unfrozen'} successfully`,
       status:  newStatus,
+    };
+  }
+
+  // ── Lookup by account number (for intrabank transfer UI) ──────
+  async lookupByAccountNumber(accountNumber: string) {
+    const account = await this.accountModel
+      .findOne({ accountNumber })
+      .populate('userId', 'firstName lastName username');
+    if (!account) throw new NotFoundException('Account not found');
+    const user = account.userId as any;
+    return {
+      firstName:   user.firstName,
+      lastName:    user.lastName,
+      username:    user.username,
+      accountType: account.accountType,
     };
   }
 
@@ -143,6 +176,15 @@ export class AccountsService {
       userId: new Types.ObjectId(userId),
     });
     if (!account) throw new NotFoundException('Account not found');
+
+    // Block close if admin-frozen
+    if (account.adminFrozen) {
+      throw new ForbiddenException(
+        'This account has been frozen by our compliance team and cannot be closed. ' +
+        'Please contact support@nexabank.com.',
+      );
+    }
+
     if (account.balance > 0)
       throw new BadRequestException(
         `Please withdraw your remaining balance of $${account.balance} before closing`,
@@ -151,8 +193,8 @@ export class AccountsService {
       throw new BadRequestException('Cannot close your primary account');
 
     await this.accountModel.findByIdAndUpdate(accountId, {
-      status:  AccountStatus.CLOSED,
-      balance: 0,
+      status:           AccountStatus.CLOSED,
+      balance:          0,
       availableBalance: 0,
     });
 

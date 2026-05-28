@@ -23,10 +23,11 @@ export class User {
   @Prop() state: string;
   @Prop() zipCode: string;
   @Prop({ default: 'US' }) country: string;
+  @Prop({ type: String, default: 'USD' }) preferredCurrency: string;
 
   // ── Profile Picture ───────────────────────────────────────────
   @Prop() profilePictureUrl: string;
-  @Prop() profilePicturePublicId: string;
+  @Prop() profilePicturePublicId: string;   
 
   // ── Role & Status ─────────────────────────────────────────────
   @Prop({ type: String, enum: UserRole,   default: UserRole.USER   }) role:   UserRole;
@@ -42,6 +43,10 @@ export class User {
 
   // ── Security PIN ──────────────────────────────────────────────
   @Prop({ select: false }) securityPinHash: string;
+  @Prop({ default: false }) hasPinSet: boolean;
+
+@Prop({ default: 0 })    pinAttempts: number;   
+@Prop()                  pinLockedUntil: Date;    
 
   // ── Login Security ────────────────────────────────────────────
   @Prop({ default: 0 })  failedLoginAttempts: number;
@@ -59,6 +64,11 @@ export class User {
   // ── KYC Status ───────────────────────────────────────────────
   @Prop({ type: String, enum: ['not_started','pending','approved','rejected'], default: 'not_started' })
   kycStatus: string;
+
+
+  @Prop({ default: false }) transferBlocked: boolean;
+  @Prop() transferBlockReason: string;
+  @Prop() transferBlockedAt: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
