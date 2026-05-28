@@ -14,7 +14,7 @@ async function bootstrap() {
 
   // CORS
   app.enableCors({
-    origin: [process.env.FRONTEND_URL, 'http://localhost:3000', 'https://backing-production.up.railway.app'],
+    origin: [process.env.FRONTEND_URL, 'http://localhost:3000', 'https://nexabank-web.vercel.app'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
